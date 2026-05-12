@@ -37,6 +37,17 @@ verify_susfs_source_integration() {
     exit 1
   }
 
+  if grep -R -q 'ksu_selinux_hide_running' security/selinux; then
+    grep -R -Eq '^[[:space:]]*struct[[:space:]]+selinux_state[[:space:]]+fake_state' "$ksu_kernel_dir" || {
+      echo "::error::KernelSU tree does not define fake_state required by the susfs SELinux hooks."
+      exit 1
+    }
+    grep -R -Eq '^[[:space:]]*bool[[:space:]]+ksu_selinux_hide_running([[:space:]]|=|;)' "$ksu_kernel_dir" || {
+      echo "::error::KernelSU tree does not define ksu_selinux_hide_running required by the susfs SELinux hooks."
+      exit 1
+    }
+  fi
+
   if [[ "$KSU_TYPE" == ReSukiSU* ]]; then
     test -f "$runtime_file" || {
       echo "::error::ReSukiSU runtime file is missing at ${runtime_file}"
@@ -74,6 +85,7 @@ verify_susfs_source_integration() {
     grep -Fn 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' fs/Makefile || true
     grep -n 'ksu_handle_sys_reboot' kernel/reboot.c | head -n 5 || true
     grep -R -n 'CMD_SUSFS_SHOW_VERSION' "$ksu_kernel_dir" | head -n 10 || true
+    grep -R -nE 'fake_state|ksu_selinux_hide_running' "$ksu_kernel_dir" | head -n 10 || true
     if [[ -f "$runtime_file" ]]; then
       grep -nE 'ksu_is_init_rc_hook_enabled|ksu_is_input_hook_enabled|ksu_init_rc_hook_key_false|ksu_input_hook_key_false' "$runtime_file" | head -n 20 || true
     fi

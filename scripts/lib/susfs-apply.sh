@@ -123,6 +123,39 @@ patch_resukisu_susfs_runtime_compat() {
   fi
 }
 
+patch_susfs_selinux_hide_compat() {
+  local ksu_kernel_dir="$1"
+  local kbuild_file="${ksu_kernel_dir}/Kbuild"
+  local compat_dir="${ksu_kernel_dir}/compat"
+  local compat_file="${compat_dir}/susfs_selinux_hide_compat.c"
+
+  if grep -R -Eq '^[[:space:]]*struct[[:space:]]+selinux_state[[:space:]]+fake_state' "$ksu_kernel_dir" && \
+     grep -R -Eq '^[[:space:]]*bool[[:space:]]+ksu_selinux_hide_running([[:space:]]|=|;)' "$ksu_kernel_dir"; then
+    echo "[+] KernelSU tree already exports susfs SELinux hide compatibility symbols."
+    return 0
+  fi
+
+  test -f "$kbuild_file" || {
+    echo "::error::KernelSU Kbuild not found at $kbuild_file"
+    exit 1
+  }
+
+  mkdir -p "$compat_dir"
+  cat > "$compat_file" <<'EOF_COMPAT'
+#include <linux/cache.h>
+#include <linux/types.h>
+#include "security.h"
+
+#ifdef CONFIG_KSU_SUSFS
+struct selinux_state fake_state;
+bool ksu_selinux_hide_running __read_mostly = false;
+#endif
+EOF_COMPAT
+
+  ensure_line_in_file "$kbuild_file" 'kernelsu-objs += compat/susfs_selinux_hide_compat.o'
+  echo "[+] Added susfs SELinux hide compatibility symbols for this KernelSU tree."
+}
+
 # Full susfs apply flow: clone susfs, copy patches, patch KernelSU tree,
 # apply the kernel-side patch with drift recovery.
 apply_susfs_full() {
@@ -152,6 +185,7 @@ apply_susfs_full() {
   cp ./susfs/kernel_patches/include/linux/* "${ksu_kernel_dir}/include/linux/"
   patch_kernelsu_for_susfs "${ksu_repo_dir}" "${ksu_kernel_dir}"
   patch_resukisu_susfs_runtime_compat "${ksu_kernel_dir}"
+  patch_susfs_selinux_hide_compat "${ksu_kernel_dir}"
 
   test -f include/linux/susfs_def.h || {
     echo "::error::susfs_def.h was not copied into include/linux from $susfs_ref"
