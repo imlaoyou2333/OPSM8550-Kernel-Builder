@@ -126,6 +126,7 @@ patch_resukisu_susfs_runtime_compat() {
 patch_susfs_selinux_hide_compat() {
   local ksu_kernel_dir="$1"
   local kbuild_file="${ksu_kernel_dir}/Kbuild"
+  [[ -f "$kbuild_file" ]] || kbuild_file="${ksu_kernel_dir}/Makefile"
   local compat_dir="${ksu_kernel_dir}/compat"
   local compat_file="${compat_dir}/susfs_selinux_hide_compat.c"
   local compat_obj_line='kernelsu-objs += compat/susfs_selinux_hide_compat.o'
