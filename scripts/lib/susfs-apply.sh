@@ -24,40 +24,55 @@ apply_susfs_task_mmu_fix() {
 
 apply_susfs_namespace_fix() {
   local file="fs/namespace.c"
+  local tmp_file
 
   if grep -q 'susfs_def.h' "$file"; then
     echo "[+] namespace.c already includes susfs_def.h."
     return 0
   fi
 
-  # Try multiple insertion points to ensure the header is included
-  # Look for common include patterns in namespace.c
-  if grep -q '^#include <linux/fs_struct.h>$' "$file"; then
-    sed -i '/^#include <linux\/fs_struct.h>$/a #ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif' "$file"
-    echo "[+] Applied susfs include fix to namespace.c (after fs_struct.h)."
+  # The patch needs to be inserted after #include <linux/mnt_idmapping.h>
+  # and the includes section. Extract the exact format from the .rej file.
+  
+  tmp_file="$(mktemp)"
+  
+  awk '
+    BEGIN { found = 0; inserted = 0 }
+    
+    /^#include <linux\/mnt_idmapping\.h>$/ {
+      print $0
+      if (!inserted) {
+        print "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT"
+        print "#include <linux/susfs_def.h>"
+        print "#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT"
+        inserted = 1
+      }
+      next
+    }
+    
+    /^#include "pnode\.h"$/ && inserted {
+      print ""
+      print "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT"
+      print "extern bool susfs_is_current_ksu_domain(void);"
+      print "extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;"
+      print ""
+      print "#define CL_COPY_MNT_NS BIT(25) /* used by copy_mnt_ns() */"
+      print ""
+      print "#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT"
+    }
+    
+    { print }
+  ' "$file" > "$tmp_file"
+  
+  if grep -q 'susfs_def.h' "$tmp_file"; then
+    mv "$tmp_file" "$file"
+    echo "[+] Applied susfs patch fix to namespace.c."
     return 0
+  else
+    rm -f "$tmp_file"
+    echo "[-] Could not apply susfs patch to $file."
+    return 1
   fi
-
-  if grep -q '^#include <linux/seq_file.h>$' "$file"; then
-    sed -i '/^#include <linux\/seq_file.h>$/a #ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif' "$file"
-    echo "[+] Applied susfs include fix to namespace.c (after seq_file.h)."
-    return 0
-  fi
-
-  # Fallback: insert after the last #include line
-  if tail -n 50 "$file" | grep -q '^#include'; then
-    # Find the line number of the last #include
-    local last_include_line
-    last_include_line=$(grep -n '^#include' "$file" | tail -1 | cut -d: -f1)
-    if [[ -n "$last_include_line" ]]; then
-      sed -i "${last_include_line}a #ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif" "$file"
-      echo "[+] Applied susfs include fix to namespace.c (after last #include)."
-      return 0
-    fi
-  fi
-
-  echo "[-] Could not find a stable insertion point in $file."
-  return 1
 }
 
 patch_susfs_kernelsu_layout() {
