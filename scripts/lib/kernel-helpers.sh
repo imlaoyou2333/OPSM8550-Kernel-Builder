@@ -137,6 +137,8 @@ apply_variant_configs() {
   if [[ "$KSU_TYPE" == "ReSukiSU-with-susfs-KPM" ]]; then
     enable_resukisu_kpm_configs "$config_file"
   fi
+  echo "---- KSU patched config file"
+  cat "$config_file"
 }
 
 require_config_enabled() {
