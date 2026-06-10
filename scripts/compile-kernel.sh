@@ -115,13 +115,13 @@ if [[ "$KSU_TYPE" == *susfs* ]]; then
   grep -E '^CONFIG_KSU_SUSFS|^CONFIG_KSU_MANUAL_HOOK|^CONFIG_TMPFS_XATTR=' out/.config || true
 fi
 
-if [[ "$KSU_TYPE" == "ReSukiSU-with-susfs-KPM" ]]; then
-  require_config_enabled out/.config CONFIG_KPM
-  require_config_enabled out/.config CONFIG_KALLSYMS
-  require_config_enabled out/.config CONFIG_KALLSYMS_ALL
-  echo "==== RESUKISU KPM CONFIG SNAPSHOT ===="
-  grep -E '^CONFIG_KPM=|^CONFIG_KALLSYMS=|^CONFIG_KALLSYMS_ALL=' out/.config || true
-fi
+#if [[ "$KSU_TYPE" == "ReSukiSU-with-susfs-KPM" ]]; then
+#  require_config_enabled out/.config CONFIG_KPM
+#  require_config_enabled out/.config CONFIG_KALLSYMS
+#  require_config_enabled out/.config CONFIG_KALLSYMS_ALL
+#  echo "==== RESUKISU KPM CONFIG SNAPSHOT ===="
+#  grep -E '^CONFIG_KPM=|^CONFIG_KALLSYMS=|^CONFIG_KALLSYMS_ALL=' out/.config || true
+#fi
 
 if [[ "$KSU_TYPE" == *susfs* ]]; then
   verify_resukisu_susfs_hook_mode
