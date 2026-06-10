@@ -25,16 +25,35 @@ apply_susfs_task_mmu_fix() {
 apply_susfs_namespace_fix() {
   local file="fs/namespace.c"
 
-  if grep -q 'CONFIG_KSU_SUSFS' "$file"; then
-    echo "[+] namespace.c already contains susfs patches."
+  if grep -q 'susfs_def.h' "$file"; then
+    echo "[+] namespace.c already includes susfs_def.h."
     return 0
   fi
 
-  # Try to apply the rejected hunk manually
-  if grep -q '^#include <linux/seq_file.h>$' "$file"; then
-    sed -i '/#include <linux\/seq_file.h>$/a #ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif' "$file"
-    echo "[+] Applied fallback susfs include fix to namespace.c."
+  # Try multiple insertion points to ensure the header is included
+  # Look for common include patterns in namespace.c
+  if grep -q '^#include <linux/fs_struct.h>$' "$file"; then
+    sed -i '/^#include <linux\/fs_struct.h>$/a #ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif' "$file"
+    echo "[+] Applied susfs include fix to namespace.c (after fs_struct.h)."
     return 0
+  fi
+
+  if grep -q '^#include <linux/seq_file.h>$' "$file"; then
+    sed -i '/^#include <linux\/seq_file.h>$/a #ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif' "$file"
+    echo "[+] Applied susfs include fix to namespace.c (after seq_file.h)."
+    return 0
+  fi
+
+  # Fallback: insert after the last #include line
+  if tail -n 50 "$file" | grep -q '^#include'; then
+    # Find the line number of the last #include
+    local last_include_line
+    last_include_line=$(grep -n '^#include' "$file" | tail -1 | cut -d: -f1)
+    if [[ -n "$last_include_line" ]]; then
+      sed -i "${last_include_line}a #ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif" "$file"
+      echo "[+] Applied susfs include fix to namespace.c (after last #include)."
+      return 0
+    fi
   fi
 
   echo "[-] Could not find a stable insertion point in $file."
