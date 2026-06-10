@@ -65,6 +65,16 @@ on:
           - ReSukiSU + susfs
           - ReSukiSU + susfs + KPM
           - ReSukiSU + susfs (build both: with KPM and without KPM)
+      susfs_ref:
+        description: Susfs branch
+        required: false
+        type: string
+        default: ""
+      susfs_patch_file:
+        description: Susfs patch file
+        required: false
+        type: string
+        default: ""
 
 jobs:
   prepare:
