@@ -22,6 +22,25 @@ apply_susfs_task_mmu_fix() {
   return 1
 }
 
+apply_susfs_namespace_fix() {
+  local file="fs/namespace.c"
+
+  if grep -q 'CONFIG_KSU_SUSFS' "$file"; then
+    echo "[+] namespace.c already contains susfs patches."
+    return 0
+  fi
+
+  # Try to apply the rejected hunk manually
+  if grep -q '^#include <linux/seq_file.h>$' "$file"; then
+    sed -i '/#include <linux\/seq_file.h>$/a #ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif' "$file"
+    echo "[+] Applied fallback susfs include fix to namespace.c."
+    return 0
+  fi
+
+  echo "[-] Could not find a stable insertion point in $file."
+  return 1
+}
+
 patch_susfs_kernelsu_layout() {
   local file="fs/susfs.c"
   local driver_dir
@@ -208,18 +227,47 @@ apply_susfs_full() {
   }
 
   if ! patch -p1 < "${susfs_patch_file}"; then
-    echo "[!] susfs patch reported conflicts, checking for known task_mmu.c drift..."
+    echo "[!] susfs patch reported conflicts, checking for known drift issues..."
 
     local reject_files reject_count
     reject_files="$(find . -name "*.rej" | sort)"
     reject_count="$(printf '%s\n' "$reject_files" | sed '/^$/d' | wc -l)"
 
-    if [[ "$reject_count" -eq 1 ]] && [[ "$reject_files" == "./fs/proc/task_mmu.c.rej" ]] && grep -q 'susfs_def.h' ./fs/proc/task_mmu.c.rej; then
+    # Handle multiple known drift scenarios
+    local task_mmu_rej=0
+    local namespace_rej=0
+    
+    if [[ -f "./fs/proc/task_mmu.c.rej" ]] && grep -q 'susfs_def.h' ./fs/proc/task_mmu.c.rej; then
+      task_mmu_rej=1
+    fi
+    
+    if [[ -f "./fs/namespace.c.rej" ]]; then
+      namespace_rej=1
+    fi
+
+    # If we only have known drifts, try to fix them automatically
+    if [[ $task_mmu_rej -eq 1 && $namespace_rej -eq 1 ]]; then
+      echo "[*] Attempting auto-fix for known drift in task_mmu.c and namespace.c..."
+      apply_susfs_task_mmu_fix && rm -f ./fs/proc/task_mmu.c.rej
+      apply_susfs_namespace_fix && rm -f ./fs/namespace.c.rej
+      
+      # Check if all rejects are resolved
+      local remaining_rejects
+      remaining_rejects="$(find . -name "*.rej" | wc -l)"
+      if [[ $remaining_rejects -eq 0 ]]; then
+        echo "[+] Resolved all known susfs patch drifts."
+      else
+        echo "==== PATCH FAILED - Unresolved rejects remain ===="
+        echo "==== REJECT FILES ===="
+        find . -name "*.rej" -print -exec sh -c 'echo "---- $1 ----"; cat "$1"' _ {} \;
+        exit 1
+      fi
+    elif [[ $task_mmu_rej -eq 1 ]] && [[ $reject_count -eq 1 ]]; then
       apply_susfs_task_mmu_fix
       rm -f ./fs/proc/task_mmu.c.rej
       echo "[+] Resolved known susfs task_mmu.c patch drift."
     else
-      echo "==== PATCH FAILED ===="
+      echo "==== PATCH FAILED - Unknown or multiple drift issues ===="
       echo "==== REJECT FILES ===="
       find . -name "*.rej" -print -exec sh -c 'echo "---- $1 ----"; cat "$1"' _ {} \;
       exit 1
