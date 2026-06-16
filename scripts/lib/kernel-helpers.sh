@@ -123,6 +123,26 @@ enable_resukisu_kpm_configs() {
     CONFIG_KALLSYMS_ALL
 }
 
+enable_lxc_configs() {
+  local config_file="$1"
+  enable_config_values "$config_file" \
+    CONFIG_SYSVIPC \
+    CONFIG_POSIX_MQUEUE \
+    CONFIG_IPC_NS \
+    CONFIG_PID_NS \
+    CONFIG_DEVTMPFS \
+    CONFIG_NETFILTER_XT_MATCH_ADDRTYPE \
+    CONFIG_NETFILTER_XT_TARGET_REJECT \
+    CONFIG_NETFILTER_XT_TARGET_LOG \
+    CONFIG_NETFILTER_XT_MATCH_RECENT \
+    CONFIG_IP_SET \
+    CONFIG_IP_SET_HASH_IP \
+    CONFIG_IP_SET_HASH_NET \
+    CONFIG_NETFILTER_XT_SET \
+    CONFIG_TMPFS_POSIX_ACL \
+    CONFIG_TMPFS_XATTR
+}
+
 apply_variant_configs() {
   local config_file="$1"
 
@@ -137,6 +157,11 @@ apply_variant_configs() {
   if [[ "$KSU_TYPE" == "ReSukiSU-with-susfs-KPM" ]]; then
     enable_resukisu_kpm_configs "$config_file"
   fi
+
+  if [[ "${ENABLE_LXC_SUPPORT:-false}" == "true" ]]; then
+    enable_lxc_configs "$config_file"
+  fi
+
   echo "---- KSU patched config file"
   cat "$config_file"
 }

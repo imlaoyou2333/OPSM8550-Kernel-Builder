@@ -29,6 +29,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib/ksu-setup.sh"
 # shellcheck source=lib/susfs-apply.sh
 . "${SCRIPT_DIR}/lib/susfs-apply.sh"
+# shellcheck source=lib/lxc-apply.sh
+. "${SCRIPT_DIR}/lib/lxc-apply.sh"
 # shellcheck source=lib/verify.sh
 . "${SCRIPT_DIR}/lib/verify.sh"
 
@@ -40,6 +42,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${OFFICIAL_BUILD_TARGET:?}"
 : "${KSU_TYPE:?}"
 : "${KERNEL_BRANCH:?}"
+: "${ENABLE_LXC_SUPPORT:-false}"
+:
 
 # ---- Toolchain / ccache env --------------------------------------------------
 CLANG_ROOT="${GITHUB_WORKSPACE}/toolchains/${CLANG_VERSION}/bin"
@@ -79,6 +83,11 @@ if [[ "$KSU_TYPE" == *susfs* ]]; then
 fi
 
 touch .scmversion
+
+# ---- lxc --------------------------------------------------------------------
+if [[ "${ENABLE_LXC_SUPPORT:-false}" == "true" ]]; then
+  apply_lxc_patch
+fi
 
 # ---- Config -----------------------------------------------------------------
 ACTIVE_BUILD_CONFIGS="${BUILD_CONFIGS}"

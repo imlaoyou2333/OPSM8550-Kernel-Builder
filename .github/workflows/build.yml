@@ -70,11 +70,11 @@ on:
         required: false
         type: string
         default: ""
-      susfs_patch_file:
-        description: Susfs patch file
+      enable_lxc_support:
+        description: Enable LXC support and apply the required kernel patch
         required: false
-        type: string
-        default: ""
+        type: boolean
+        default: false
 
 jobs:
   prepare:
@@ -115,6 +115,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       DEBIAN_FRONTEND: noninteractive
+      ENABLE_LXC_SUPPORT: ${{ inputs.enable_lxc_support }}
 
     steps:
       - name: Checkout
