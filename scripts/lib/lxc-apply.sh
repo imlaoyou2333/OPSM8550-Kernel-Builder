@@ -3,7 +3,7 @@
 # Provides LXC support patch application for the kernel build pipeline.
 
 apply_lxc_patch() {
-  local patch_url="https://github.com/ravindu644/Droidspaces-OSS/raw/refs/heads/main/Documentation/resources/kernel-patches/GKI/below-kernel-6.12/001.GKI-below-6.12-fix_sysvipc_kabi_1_2_3.patch"
+  local patch_url="https://github.com/ravindu644/Droidspaces-OSS/raw/refs/heads/main/Documentation/resources/kernel-patches/GKI/below-kernel-6.12/001.GKI-below-6.12-fix_sysvipc_kabi_3_4_5.patch"
   local patch_file
 
   patch_file="$(mktemp /tmp/lxc-patch.XXXXXX.patch)"
