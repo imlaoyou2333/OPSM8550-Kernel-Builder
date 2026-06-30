@@ -24,6 +24,8 @@ sitting.
 - `lib/kernel-helpers.sh` — small utilities: config value edit, line insertion, driver-dir detection.
 - `lib/ksu-setup.sh` — installs the selected KSU variant (Official / Next / KowSU / ReSukiSU).
 - `lib/susfs-apply.sh` — clones `susfs4ksu`, applies the patch with drift recovery, patches KernelSU Kconfig and ReSukiSU runtime compat.
+- `lib/lxc-apply.sh` — downloads and applies the optional LXC support patch.
+- `lib/ntsync-apply.sh` — downloads and applies the optional NTSync support patches.
 - `lib/verify.sh` — source-level, binary-level, and ReSukiSU hook-mode verifications.
 
 ## Conventions

@@ -33,6 +33,7 @@ Additional source presets:
 - AOSP Clang caching plus `ccache` reuse for faster repeat builds
 - Built-in support for `KernelSU`, `KernelSU-Next`, `KowSU`, and `ReSukiSU`
 - Platform-aware `susfs` branch selection for supported presets
+- Optional LXC and NTSync support patching from workflow inputs
 - Source-level and binary-level `susfs` verification
 - Automatic `AnyKernel3` packaging, GitHub Release creation, and artifact upload
 
@@ -109,6 +110,11 @@ Available options:
 - `ReSukiSU + susfs (build both: with KPM and without KPM)`
 
 The last option launches two build jobs so you get both `ReSukiSU + susfs` variants in one run.
+
+### Optional Kernel Features
+
+- `Enable LXC support`: applies the LXC kernel patch and enables the required LXC config options.
+- `Enable NTSync support`: applies the NTSync base and Android 13 / 5.15 compatibility patches, then enables `CONFIG_NTSYNC=y`.
 
 ## Recommended Quick Start
 

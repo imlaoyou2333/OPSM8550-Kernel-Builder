@@ -143,6 +143,11 @@ enable_lxc_configs() {
     CONFIG_TMPFS_XATTR
 }
 
+enable_ntsync_configs() {
+  local config_file="$1"
+  enable_config_values "$config_file" CONFIG_NTSYNC
+}
+
 apply_variant_configs() {
   local config_file="$1"
 
@@ -160,6 +165,10 @@ apply_variant_configs() {
 
   if [[ "${ENABLE_LXC_SUPPORT:-false}" == "true" ]]; then
     enable_lxc_configs "$config_file"
+  fi
+
+  if [[ "${ENABLE_NTSYNC_SUPPORT:-false}" == "true" ]]; then
+    enable_ntsync_configs "$config_file"
   fi
 
   echo "---- KSU patched config file"

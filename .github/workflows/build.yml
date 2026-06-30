@@ -75,6 +75,11 @@ on:
         required: false
         type: boolean
         default: false
+      enable_ntsync_support:
+        description: Enable NTSync support and apply the required kernel patches
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   prepare:
@@ -104,7 +109,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.build_matrix) }}
     concurrency:
-      group: kernel-ci-${{ github.workflow }}-${{ github.ref_name }}-${{ inputs.platform }}-${{ inputs.source_choice }}-${{ inputs.branch_mode }}-${{ inputs.kernel_branch }}-${{ matrix.ksu_type }}-${{ inputs.clang_choice }}
+      group: kernel-ci-${{ github.workflow }}-${{ github.ref_name }}-${{ inputs.platform }}-${{ inputs.source_choice }}-${{ inputs.branch_mode }}-${{ inputs.kernel_branch }}-${{ matrix.ksu_type }}-${{ inputs.clang_choice }}-lxc-${{ inputs.enable_lxc_support }}-ntsync-${{ inputs.enable_ntsync_support }}
       cancel-in-progress: true
 
     permissions:
@@ -116,6 +121,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       DEBIAN_FRONTEND: noninteractive
       ENABLE_LXC_SUPPORT: ${{ inputs.enable_lxc_support }}
+      ENABLE_NTSYNC_SUPPORT: ${{ inputs.enable_ntsync_support }}
 
     steps:
       - name: Checkout

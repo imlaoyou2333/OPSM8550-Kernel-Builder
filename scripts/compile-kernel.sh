@@ -31,6 +31,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib/susfs-apply.sh"
 # shellcheck source=lib/lxc-apply.sh
 . "${SCRIPT_DIR}/lib/lxc-apply.sh"
+# shellcheck source=lib/ntsync-apply.sh
+. "${SCRIPT_DIR}/lib/ntsync-apply.sh"
 # shellcheck source=lib/verify.sh
 . "${SCRIPT_DIR}/lib/verify.sh"
 
@@ -43,6 +45,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${KSU_TYPE:?}"
 : "${KERNEL_BRANCH:?}"
 : "${ENABLE_LXC_SUPPORT:-false}"
+: "${ENABLE_NTSYNC_SUPPORT:-false}"
 :
 
 # ---- Toolchain / ccache env --------------------------------------------------
@@ -89,6 +92,11 @@ if [[ "${ENABLE_LXC_SUPPORT:-false}" == "true" ]]; then
   apply_lxc_patch
 fi
 
+# ---- NTSync -----------------------------------------------------------------
+if [[ "${ENABLE_NTSYNC_SUPPORT:-false}" == "true" ]]; then
+  apply_ntsync_patches
+fi
+
 # ---- Config -----------------------------------------------------------------
 ACTIVE_BUILD_CONFIGS="${BUILD_CONFIGS}"
 if [[ "$SOURCE_LAYOUT" == "oneplus-official" ]]; then
@@ -116,6 +124,12 @@ if ! make -j"$(nproc)" O=out Image 2>&1 | tee build.log; then
 fi
 
 # ---- Post-build checks -------------------------------------------------------
+if [[ "${ENABLE_NTSYNC_SUPPORT:-false}" == "true" ]]; then
+  require_config_enabled out/.config CONFIG_NTSYNC
+  echo "==== NTSYNC CONFIG SNAPSHOT ===="
+  grep -E '^CONFIG_NTSYNC=' out/.config || true
+fi
+
 if [[ "$KSU_TYPE" == *susfs* ]]; then
   require_config_enabled  out/.config CONFIG_KSU_SUSFS
   require_config_disabled out/.config CONFIG_KSU_MANUAL_HOOK
