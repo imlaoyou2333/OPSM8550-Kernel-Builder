@@ -140,7 +140,8 @@ enable_lxc_configs() {
     CONFIG_IP_SET_HASH_NET \
     CONFIG_NETFILTER_XT_SET \
     CONFIG_TMPFS_POSIX_ACL \
-    CONFIG_TMPFS_XATTR
+    CONFIG_TMPFS_XATTR \
+    CONFIG_USER_NS
 }
 
 enable_ntsync_configs() {
