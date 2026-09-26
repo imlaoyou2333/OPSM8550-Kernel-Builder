@@ -1,34 +1,22 @@
 #!/usr/bin/env bash
 #
-# Orchestrates the full kernel compile flow:
-#   1. Set up cross-compile / ccache environment
-#   2. Apply the requested KSU variant
-#   3. Apply susfs patches (if requested)
-#   4. Generate defconfig, merge config fragments, apply variant tweaks
-#   5. Build Image
-#   6. Run post-build verifications
-#
-# Required env (provided by the workflow):
-#   GITHUB_WORKSPACE
-#   CLANG_VERSION
-#   SOC
-#   BUILD_CONFIGS
-#   SOURCE_LAYOUT
-#   OFFICIAL_BUILD_TARGET
-#   KSU_TYPE
-#   KERNEL_BRANCH
-#   SUSFS_REF          (optional; only for susfs variants)
-#   SUSFS_PATCH_FILE   (optional; only for susfs variants)
+# Apply the selected integrations, generate config, and optionally build Image.
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/git-helpers.sh
+. "${SCRIPT_DIR}/lib/git-helpers.sh"
 # shellcheck source=lib/kernel-helpers.sh
 . "${SCRIPT_DIR}/lib/kernel-helpers.sh"
 # shellcheck source=lib/ksu-setup.sh
 . "${SCRIPT_DIR}/lib/ksu-setup.sh"
 # shellcheck source=lib/susfs-apply.sh
 . "${SCRIPT_DIR}/lib/susfs-apply.sh"
+# shellcheck source=lib/nomount-setup.sh
+. "${SCRIPT_DIR}/lib/nomount-setup.sh"
+# shellcheck source=lib/zeromount-setup.sh
+. "${SCRIPT_DIR}/lib/zeromount-setup.sh"
 # shellcheck source=lib/lxc-apply.sh
 . "${SCRIPT_DIR}/lib/lxc-apply.sh"
 # shellcheck source=lib/ntsync-apply.sh
@@ -37,18 +25,53 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib/verify.sh"
 
 : "${GITHUB_WORKSPACE:?}"
+: "${GITHUB_STEP_SUMMARY:?}"
 : "${CLANG_VERSION:?}"
 : "${SOC:?}"
 : "${BUILD_CONFIGS:?}"
+: "${KERNEL_MAKE_FLAGS:=}"
 : "${SOURCE_LAYOUT:?}"
 : "${OFFICIAL_BUILD_TARGET:?}"
 : "${KSU_TYPE:?}"
 : "${KERNEL_BRANCH:?}"
-: "${ENABLE_LXC_SUPPORT:-false}"
-: "${ENABLE_NTSYNC_SUPPORT:-false}"
-:
+: "${KERNEL_COMMIT:?}"
+: "${BUILD_MODE:?}"
+: "${ENABLE_LXC_SUPPORT:=false}"
+: "${ENABLE_NTSYNC_SUPPORT:=false}"
 
-# ---- Toolchain / ccache env --------------------------------------------------
+BUILD_STARTED_AT="$(date +%s)"
+CONFIG_SECONDS=0
+COMPILE_SECONDS=0
+BUILD_PHASE="setup"
+
+publish_performance_summary() {
+  local status="$?"
+  local finished_at
+  local elapsed
+
+  trap - EXIT
+  finished_at="$(date +%s)"
+  elapsed=$((finished_at - BUILD_STARTED_AT))
+
+  {
+    echo "### Build performance"
+    echo "- Result: $([[ "$status" -eq 0 ]] && echo success || echo failure)"
+    echo "- Last phase: $BUILD_PHASE"
+    echo "- Config/patch time: ${CONFIG_SECONDS}s"
+    echo "- Compile time: ${COMPILE_SECONDS}s"
+    echo "- Script total: ${elapsed}s"
+    if command -v ccache >/dev/null 2>&1; then
+      echo
+      echo '```text'
+      ccache --show-stats || true
+      echo '```'
+    fi
+  } >> "$GITHUB_STEP_SUMMARY"
+
+  exit "$status"
+}
+trap publish_performance_summary EXIT
+
 CLANG_ROOT="${GITHUB_WORKSPACE}/toolchains/${CLANG_VERSION}/bin"
 export PATH="${CLANG_ROOT}:${PATH}"
 export ARCH=arm64
@@ -59,97 +82,264 @@ export CCACHE_DIR="${GITHUB_WORKSPACE}/.ccache"
 export CCACHE_BASEDIR="${GITHUB_WORKSPACE}"
 export CCACHE_NOHASHDIR=true
 export CCACHE_COMPILERCHECK=content
-export CCACHE_MAXSIZE=2G
+export CCACHE_COMPRESS=true
+export CCACHE_COMPRESSLEVEL=6
+export CCACHE_MAXSIZE=3G
 mkdir -p "${CCACHE_DIR}"
-export CC="ccache ${CLANG_ROOT}/clang"
-export CXX="ccache ${CLANG_ROOT}/clang++"
-export HOSTCC="ccache ${CLANG_ROOT}/clang"
-export HOSTCXX="ccache ${CLANG_ROOT}/clang++"
-export LD="${CLANG_ROOT}/ld.lld"
-export AR="${CLANG_ROOT}/llvm-ar"
-export NM="${CLANG_ROOT}/llvm-nm"
-export OBJCOPY="${CLANG_ROOT}/llvm-objcopy"
-export OBJDUMP="${CLANG_ROOT}/llvm-objdump"
-export STRIP="${CLANG_ROOT}/llvm-strip"
 
 cd "${SOC}"
 
-# ---- KSU variant -------------------------------------------------------------
+SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$KERNEL_COMMIT")"
+export SOURCE_DATE_EPOCH
+export KBUILD_BUILD_TIMESTAMP
+KBUILD_BUILD_TIMESTAMP="$(date -u -d "@${SOURCE_DATE_EPOCH}" '+%Y-%m-%d %H:%M:%S UTC')"
+export KBUILD_BUILD_USER=opskernel
+export KBUILD_BUILD_HOST=github-actions
+
+# Command-line assignments take precedence over Kbuild's own CC/HOSTCC values.
+# Exporting CC alone is not sufficient when LLVM=1 because the kernel Makefile
+# assigns CC=clang internally.
+MAKE_ARGS=(
+  O=out
+  LLVM=1
+  LLVM_IAS=1
+  "CC=ccache clang"
+  "CXX=ccache clang++"
+  "HOSTCC=ccache clang"
+  "HOSTCXX=ccache clang++"
+)
+if [[ -n "$KERNEL_MAKE_FLAGS" ]]; then
+  read -r -a KERNEL_MAKE_FLAG_ARRAY <<< "$KERNEL_MAKE_FLAGS"
+  for make_flag in "${KERNEL_MAKE_FLAG_ARRAY[@]}"; do
+    if [[ ! "$make_flag" =~ ^CONFIG_[A-Z0-9_]+=(y|m|n)$ ]]; then
+      echo "::error::Invalid device kernel make flag: $make_flag"
+      exit 1
+    fi
+  done
+  MAKE_ARGS+=("${KERNEL_MAKE_FLAG_ARRAY[@]}")
+  echo "[config] Device make flags: ${KERNEL_MAKE_FLAG_ARRAY[*]}"
+fi
+
+ccache --zero-stats || true
+CONFIG_STARTED_AT="$(date +%s)"
+BUILD_PHASE="source integration"
+
+repair_extract_cert_key_pass_guard certs/extract-cert.c
 install_ksu_variant "${KSU_TYPE}"
 
-# ---- susfs -------------------------------------------------------------------
+if [[ "$KSU_TYPE" == *KPM* ]]; then
+  verify_kpm_source_integration "${KSU_KERNEL_DIR}"
+fi
+
 if [[ "$KSU_TYPE" == *susfs* ]]; then
   : "${SUSFS_REF:?}"
+  : "${SUSFS_COMMIT:?}"
   : "${SUSFS_PATCH_FILE:?}"
-  apply_susfs_full "$SUSFS_REF" "$SUSFS_PATCH_FILE"
+  apply_susfs_full "$SUSFS_REF" "$SUSFS_COMMIT" "$SUSFS_PATCH_FILE"
   verify_susfs_source_integration "${KSU_KERNEL_DIR}"
 fi
 
-touch .scmversion
+if [[ "$KSU_TYPE" == *zeromount* ]]; then
+  : "${ZEROMOUNT_REPO:?}"
+  : "${ZEROMOUNT_COMMIT:?}"
+  : "${ZEROMOUNT_GKI_TAG:?}"
+  install_zeromount "$ZEROMOUNT_REPO" "$ZEROMOUNT_COMMIT" "$ZEROMOUNT_GKI_TAG"
+  verify_zeromount_source_integration
+fi
 
-# ---- lxc --------------------------------------------------------------------
-if [[ "${ENABLE_LXC_SUPPORT:-false}" == "true" ]]; then
+if [[ "$KSU_TYPE" == *nomount* ]]; then
+  : "${NOMOUNT_REPO:?}"
+  : "${NOMOUNT_REF:?}"
+  : "${NOMOUNT_COMMIT:?}"
+  install_nomount "$NOMOUNT_REPO" "$NOMOUNT_REF" "$NOMOUNT_COMMIT"
+  verify_nomount_source_integration
+fi
+
+if [[ "$ENABLE_LXC_SUPPORT" == "true" ]]; then
   apply_lxc_patch
 fi
 
-# ---- NTSync -----------------------------------------------------------------
-if [[ "${ENABLE_NTSYNC_SUPPORT:-false}" == "true" ]]; then
+if [[ "$ENABLE_NTSYNC_SUPPORT" == "true" ]]; then
   apply_ntsync_patches
 fi
 
-# ---- Config -----------------------------------------------------------------
+# Match the ROM kernel's CONFIG_LOCALVERSION_AUTO result without inheriting the
+# intentionally dirty integration worktree. Vendor modules include this release
+# string in vermagic and fail during early boot when the source identity is lost.
+write_kernel_scmversion "$KERNEL_COMMIT"
+
 ACTIVE_BUILD_CONFIGS="${BUILD_CONFIGS}"
 if [[ "$SOURCE_LAYOUT" == "oneplus-official" ]]; then
   ACTIVE_BUILD_CONFIGS="vendor/${OFFICIAL_BUILD_TARGET}_GKI.config"
 fi
+read -r -a ACTIVE_CONFIG_ARRAY <<< "$ACTIVE_BUILD_CONFIGS"
 
+BUILD_PHASE="config generation"
 apply_variant_configs arch/arm64/configs/gki_defconfig
-
-# shellcheck disable=SC2086
-make O=out gki_defconfig ${ACTIVE_BUILD_CONFIGS}
-
+make "${MAKE_ARGS[@]}" gki_defconfig "${ACTIVE_CONFIG_ARRAY[@]}"
 apply_variant_configs out/.config
-make O=out olddefconfig
+make "${MAKE_ARGS[@]}" olddefconfig
 
-# ---- Build -------------------------------------------------------------------
-ccache -z || true
+require_config_enabled  out/.config CONFIG_MODULES
+require_config_enabled  out/.config CONFIG_MODULE_UNLOAD
+require_config_enabled  out/.config CONFIG_MODVERSIONS
 
-if ! make -j"$(nproc)" O=out Image 2>&1 | tee build.log; then
-  ccache -sv || true
+if [[ "$KSU_TYPE" != "None" ]]; then
+  require_config_enabled out/.config CONFIG_KSU
+fi
+if [[ "$KSU_TYPE" == *susfs* ]]; then
+  require_config_enabled  out/.config CONFIG_KSU_SUSFS
+  require_config_enabled  out/.config CONFIG_KSU_SUSFS_SUS_MAP
+  require_config_enabled  out/.config CONFIG_KSU_SUSFS_OPEN_REDIRECT
+  require_config_disabled out/.config CONFIG_KSU_MANUAL_HOOK
+  require_config_disabled out/.config CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+fi
+if [[ "$KSU_TYPE" == *nomount* ]]; then
+  require_config_enabled out/.config CONFIG_KEYS
+  require_config_enabled out/.config CONFIG_NOMOUNT
+fi
+if [[ "$KSU_TYPE" == *zeromount* ]]; then
+  require_config_enabled out/.config CONFIG_ZEROMOUNT
+fi
+if [[ "$KSU_TYPE" == *KPM* ]]; then
+  require_config_enabled out/.config CONFIG_KPM
+  require_config_enabled out/.config CONFIG_KALLSYMS
+  require_config_enabled out/.config CONFIG_KALLSYMS_ALL
+fi
+if [[ "$ENABLE_LXC_SUPPORT" == "true" ]]; then
+  require_config_enabled out/.config CONFIG_USER_NS
+fi
+if [[ "$ENABLE_NTSYNC_SUPPORT" == "true" ]]; then
+  require_config_enabled out/.config CONFIG_NTSYNC
+fi
+
+CONFIG_SECONDS=$(($(date +%s) - CONFIG_STARTED_AT))
+
+if [[ "$BUILD_MODE" == "Patch/config validation only" ]]; then
+  BUILD_PHASE="host-tool smoke compile"
+  COMPILE_STARTED_AT="$(date +%s)"
+  if ! make "${MAKE_ARGS[@]}" certs/extract-cert; then
+    COMPILE_SECONDS=$(($(date +%s) - COMPILE_STARTED_AT))
+    echo "::error::Kernel certificate host-tool smoke compile failed."
+    exit 1
+  fi
+  COMPILE_SECONDS=$(($(date +%s) - COMPILE_STARTED_AT))
+
+  SMOKE_TARGETS=()
+  if [[ "$KSU_TYPE" == *susfs* ]]; then
+    SMOKE_TARGETS+=(
+      fs/susfs.o
+      fs/namespace.o
+      fs/proc/task_mmu.o
+      kernel/reboot.o
+      "${KSU_DRIVER_DIR}/kernelsu/kernelsu.o"
+    )
+  fi
+  if [[ "$KSU_TYPE" == *nomount* ]]; then
+    SMOKE_TARGETS+=("${NOMOUNT_FS_DIR}/nomount/nomount.o")
+  fi
+  if [[ "$KSU_TYPE" == *zeromount* ]]; then
+    SMOKE_TARGETS+=(
+      fs/zeromount.o
+      fs/namei.o
+      fs/readdir.o
+      fs/d_path.o
+      fs/stat.o
+      fs/statfs.o
+      fs/xattr.o
+      fs/proc/base.o
+    )
+  fi
+  if [[ "$KSU_TYPE" == *KPM* ]]; then
+    if [[ "$KSU_TYPE" != *susfs* ]]; then
+      SMOKE_TARGETS+=("${KSU_DRIVER_DIR}/kernelsu/kernelsu.o")
+    fi
+    SMOKE_TARGETS+=(
+      "${KSU_DRIVER_DIR}/kernelsu/kpm/compact.o"
+      "${KSU_DRIVER_DIR}/kernelsu/kpm/kpm.o"
+      "${KSU_DRIVER_DIR}/kernelsu/kpm/super_access.o"
+    )
+  fi
+
+  if [[ "${#SMOKE_TARGETS[@]}" -gt 0 ]]; then
+    BUILD_PHASE="integration object smoke compile"
+    COMPILE_STARTED_AT="$(date +%s)"
+    if ! make -j"$(nproc)" "${MAKE_ARGS[@]}" "${SMOKE_TARGETS[@]}" 2>&1 | tee integration-smoke.log; then
+      COMPILE_SECONDS=$((COMPILE_SECONDS + $(date +%s) - COMPILE_STARTED_AT))
+      echo "::error::SUSFS/NoMount/ZeroMount/KPM integration object smoke compile failed."
+      exit 1
+    fi
+    COMPILE_SECONDS=$((COMPILE_SECONDS + $(date +%s) - COMPILE_STARTED_AT))
+    if [[ "$KSU_TYPE" == *susfs* ]]; then
+      verify_susfs_binary_presence
+    fi
+    if [[ "$KSU_TYPE" == *nomount* ]]; then
+      verify_nomount_binary_presence
+    fi
+    if [[ "$KSU_TYPE" == *zeromount* ]]; then
+      verify_zeromount_binary_presence
+    fi
+    if [[ "$KSU_TYPE" == *KPM* ]]; then
+      verify_kpm_binary_presence
+    fi
+  fi
+
+  BUILD_PHASE="validation complete"
+  echo "[+] Source integration, config validation, and integration object smoke compile completed."
+  exit 0
+fi
+
+BUILD_PHASE="kernel compilation"
+COMPILE_STARTED_AT="$(date +%s)"
+if ! make -j"$(nproc)" "${MAKE_ARGS[@]}" Image 2>&1 | tee build.log; then
+  COMPILE_SECONDS=$(($(date +%s) - COMPILE_STARTED_AT))
+  ccache --show-stats || true
   echo "==== BUILD ERROR SUMMARY ===="
   grep -nE ' error:|undefined reference|No rule to make target|fatal error:' build.log | tail -n 50 || true
   echo "==== BUILD FAILED (last 200 lines) ===="
   tail -n 200 build.log || true
   exit 1
 fi
+COMPILE_SECONDS=$(($(date +%s) - COMPILE_STARTED_AT))
 
-# ---- Post-build checks -------------------------------------------------------
-if [[ "${ENABLE_NTSYNC_SUPPORT:-false}" == "true" ]]; then
-  require_config_enabled out/.config CONFIG_NTSYNC
+BUILD_PHASE="post-build verification"
+KERNEL_RELEASE="$(make -s "${MAKE_ARGS[@]}" kernelrelease)"
+verify_kernel_release_identity "$KERNEL_RELEASE" "$KERNEL_COMMIT"
+if ! strings out/arch/arm64/boot/Image | grep -F "Linux version ${KERNEL_RELEASE} " >/dev/null; then
+  echo "::error::Built Image banner does not contain the verified kernel release: ${KERNEL_RELEASE}"
+  exit 1
+fi
+echo "[+] Kernel release identity verified: ${KERNEL_RELEASE}"
+if [[ "$KSU_TYPE" == *susfs* ]]; then
+  echo "==== SUSFS CONFIG SNAPSHOT ===="
+  grep -E '^CONFIG_KSU_SUSFS|^CONFIG_KSU_MANUAL_HOOK|^CONFIG_TMPFS_XATTR=|^CONFIG_NOMOUNT=' out/.config || true
+  if [[ "$KSU_TYPE" == ReSukiSU* ]]; then
+    verify_resukisu_susfs_hook_mode
+  fi
+  verify_susfs_binary_presence
+fi
+if [[ "$KSU_TYPE" == *nomount* ]]; then
+  verify_nomount_binary_presence
+fi
+if [[ "$KSU_TYPE" == *zeromount* ]]; then
+  echo "==== ZEROMOUNT CONFIG SNAPSHOT ===="
+  grep -E '^CONFIG_ZEROMOUNT=|^CONFIG_KSU_SUSFS=' out/.config || true
+  verify_zeromount_binary_presence
+fi
+if [[ "$KSU_TYPE" == *KPM* ]]; then
+  echo "==== KPM CONFIG SNAPSHOT ===="
+  grep -E '^CONFIG_KPM=|^CONFIG_KALLSYMS(_ALL)?=' out/.config || true
+  verify_kpm_binary_presence
+fi
+if [[ "$ENABLE_LXC_SUPPORT" == "true" ]]; then
+  echo "==== LXC CONFIG SNAPSHOT ===="
+  grep -E '^CONFIG_(NAMESPACES|IPC_NS|PID_NS|USER_NS|SYSVIPC|POSIX_MQUEUE|DEVTMPFS|TMPFS_POSIX_ACL|TMPFS_XATTR)=' out/.config || true
+fi
+if [[ "$ENABLE_NTSYNC_SUPPORT" == "true" ]]; then
   echo "==== NTSYNC CONFIG SNAPSHOT ===="
   grep -E '^CONFIG_NTSYNC=' out/.config || true
 fi
 
-if [[ "$KSU_TYPE" == *susfs* ]]; then
-  require_config_enabled  out/.config CONFIG_KSU_SUSFS
-  require_config_disabled out/.config CONFIG_KSU_MANUAL_HOOK
-  require_config_disabled out/.config CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-  echo "==== SUSFS CONFIG SNAPSHOT ===="
-  grep -E '^CONFIG_KSU_SUSFS|^CONFIG_KSU_MANUAL_HOOK|^CONFIG_TMPFS_XATTR=' out/.config || true
-fi
-
-#if [[ "$KSU_TYPE" == "ReSukiSU-with-susfs-KPM" ]]; then
-#  require_config_enabled out/.config CONFIG_KPM
-#  require_config_enabled out/.config CONFIG_KALLSYMS
-#  require_config_enabled out/.config CONFIG_KALLSYMS_ALL
-#  echo "==== RESUKISU KPM CONFIG SNAPSHOT ===="
-#  grep -E '^CONFIG_KPM=|^CONFIG_KALLSYMS=|^CONFIG_KALLSYMS_ALL=' out/.config || true
-#fi
-
-if [[ "$KSU_TYPE" == *susfs* ]]; then
-  verify_resukisu_susfs_hook_mode
-  verify_susfs_binary_presence
-fi
-
-ccache -sv || true
+ccache --show-stats || true
 test -f out/arch/arm64/boot/Image
+BUILD_PHASE="build complete"
