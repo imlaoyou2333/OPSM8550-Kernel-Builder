@@ -36,7 +36,7 @@ jobs:
       matrix:
         integration:
           - KernelSU-Next + SUSFS + NoMount (experimental)
-          - ReSukiSU + SUSFS + NoMount (experimental)
+          - BakaSU + SUSFS + NoMount (experimental)
           - SukiSU Ultra + SUSFS + NoMount + KPM (experimental)
           - SukiSU Ultra + SUSFS + ZeroMount + KPM (experimental)
         profile:
@@ -44,12 +44,21 @@ jobs:
           - SM7550 | OnePlus Nord CE4 | crDroid (recommended for crDroid)
           - SM8450 | OnePlus 10T / Ace Pro | LineageOS community
           - SM8550 | OnePlus 11 / 12R | LineageOS (recommended)
+          - SM8550 | OnePlus 11 / 12R | crDroid
           - SM8650 | OnePlus 12 | LineageOS (recommended)
         include:
+          - integration: FinaSU (experimental)
+            profile: SM8450 | OnePlus 10T / Ace Pro | LineageOS community
+          - integration: FinaSU (experimental)
+            profile: SM8550 | OnePlus 11 / 12R | LineageOS (recommended)
+          - integration: FinaSU (experimental)
+            profile: SM8650 | OnePlus 12 | LineageOS (recommended)
           - integration: KernelSU-Next + SUSFS + ZeroMount (experimental)
             profile: SM8550 | OnePlus 11 / 12R | LineageOS (recommended)
-          - integration: ReSukiSU + SUSFS + ZeroMount (experimental)
+          - integration: BakaSU + SUSFS + ZeroMount (experimental)
             profile: SM8550 | OnePlus 11 / 12R | LineageOS (recommended)
+          - integration: BakaSU + SUSFS + ZeroMount (experimental)
+            profile: SM8550 | OnePlus 11 / 12R | crDroid
           - integration: No root changes
             profile: SM8550 | OnePlus 11 | LunarisOS
           - integration: No root changes

@@ -30,6 +30,14 @@ Shell implementation used by the GitHub Actions workflows.
   compatibility.
 - `lib/ksu-setup.sh` checks out the selected KernelSU-compatible implementation
   at the exact resolved commit and connects it to the kernel driver tree.
+- `lib/ksu-uapi.sh` applies guarded UAPI 5/6 backports after SUSFS, preserving
+  the pinned hook ABI while implementing the newer manager interfaces. The
+  optional SukiSU preinit runner remains unavailable and is not advertised.
+  Its extension-hub bridge exposes only config-backed KPM/SuSFS discovery and
+  forwards KPM IO to the existing loader, retaining legacy ioctl support.
+- `lib/kpm-image.sh` injects a checksum-pinned SukiSU KernelPatch payload after
+  full compilation, inspects the result, and binds the packaging gate to its
+  Image SHA-256. Source/config validation alone cannot prove KPM is injected.
 - `templates/anykernel.sh` provides the slot-aware OnePlus `boot` installer used
   in release ZIPs instead of AnyKernel3's example-device script.
 - `lib/susfs-apply.sh` applies SUSFS at an exact commit, repairs explicitly
@@ -54,18 +62,45 @@ Shell implementation used by the GitHub Actions workflows.
   including an LTO-aware `llvm-nm` check of the compiled KPM resolver, plus
   dedicated KPM, SUSFS, NoMount, and ZeroMount proofs. Full builds also verify
   that the final `Image` release suffix identifies the pinned kernel commit.
+  SUSFS validation also checks exec/SELinux object references against global
+  KernelSU/SUSFS definitions with the active toolchain's `llvm-nm`, so missing
+  hook symbols fail before a full kernel link.
 
 ## Tests
 
 `tests/profile-data-test.sh` verifies all supported profile mappings and keeps
 the workflow dropdown synchronized with the mapping library. It also checks
 representative root, Clang, KPM, SUSFS, NoMount, and Android version decisions.
+FinaSU coverage checks exact `master` resolution, checkout routing, required
+driver/manager config, and exclusion of the existing SUSFS patch pipeline.
+Its upstream-health entries compile the driver on 5.10, 5.15, and 6.1 profiles.
+`tests/finasu-manager-test.sh` runs the real pinned FinaSU Kbuild and certificate
+matcher against its public v1.2.1 release certificate. It reproduces rejection
+with the upstream default key, verifies our release-slot arguments authorize
+FinaSU while other preset managers stay untrusted, and rejects an Image missing
+the release certificate hash. Each FinaSU build also runs this matcher test
+against the driver revision it actually checked out, before compiling the
+kernel. `lib/finasu-manager.sh` supplies the release identity to every make
+invocation; full builds and packaging independently verify the final Image.
+crDroid 13 coverage checks Android 17 branch inference, the pinned
+`clang-r584948` toolchain, automatic/manual resolver output for all three
+crDroid profiles, retained Android 16 selection, and Android 17 ZIP properties.
 
 The push/PR validation workflow runs Bash syntax checks, ShellCheck, these
-offline tests, and actionlint. The scheduled upstream-health workflow resolves
+offline tests, and actionlint. A separate `tests/ksu-uapi-test.sh` integration
+test composes the exact upstream drivers with SUSFS and the backports, then
+executes the real C service handlers and symbol resolver with host mocks.
+It checks restart semantics, duplicate/suffixed/module symbols, lookup argument
+errors, capability/permission wiring, idempotence, and rejection of source drift.
+Extension tests execute the real bridge for all KPM/SuSFS config combinations,
+checking wire layout, routing, unsupported operations, and copy errors.
+`tests/kpm-image-test.sh` checks download integrity, patch failure handling,
+output inspection, and rejection of a missing or stale Image proof.
+The scheduled upstream-health workflow resolves
 every profile and runs a matrix covering KernelSU-Next + SUSFS + NoMount, the combined
-SukiSU Ultra + SUSFS + NoMount + KPM preset, and ReSukiSU + SUSFS + NoMount on
-representative SM7550, SM8450, SM8550, and SM8650 sources, including targeted
+SukiSU Ultra + SUSFS + NoMount + KPM preset, and BakaSU + SUSFS + NoMount on
+representative SM7550, SM8450, SM8550 (including crDroid), and SM8650 sources,
+including targeted
 integration object compilation and a LunarisOS OnePlus 11 baseline smoke test.
 
 ## Conventions

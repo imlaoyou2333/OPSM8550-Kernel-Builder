@@ -74,6 +74,17 @@ detect_kernelsu_driver_dir() {
   fi
 }
 
+detect_extract_cert_source() {
+  local source_file
+  for source_file in certs/extract-cert.c scripts/extract-cert.c; do
+    if [[ -f "$source_file" ]]; then
+      echo "$source_file"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Repair a stable-backport merge regression where key_pass was guarded as if
 # the OpenSSL provider implementation were present, while the older ENGINE
 # implementation still referenced it unconditionally. Keep this deliberately
@@ -195,8 +206,11 @@ enable_susfs_configs() {
     CONFIG_KSU_SUSFS_ENABLE_LOG \
     CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
     CONFIG_KSU_SUSFS_OPEN_REDIRECT
-  disable_config_values "$config_file" \
-    CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+  if [[ "$KSU_TYPE" == SukiSU-Ultra-with-susfs* ]]; then
+    enable_config_values "$config_file" CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+  else
+    disable_config_values "$config_file" CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+  fi
 }
 
 enable_ksu_common_configs() {
@@ -228,6 +242,16 @@ enable_lxc_configs() {
 enable_ntsync_configs() {
   local config_file="$1"
   enable_config_values "$config_file" CONFIG_NTSYNC
+}
+
+# A boot-only custom Image has a newly generated module signing key and cannot
+# authenticate protected GKI modules retained in the ROM's system_dlkm. This
+# opt-in mode allows those modules through the protected-symbol check. Their
+# signatures still cannot be authenticated with the new Image's key.
+apply_rom_gki_module_compat_config() {
+  local config_file="$1"
+  [[ "${ROM_GKI_MODULE_COMPAT:-0}" == 1 ]] || return 0
+  disable_config_values "$config_file" CONFIG_MODULE_SIG_PROTECT
 }
 
 write_kernel_scmversion() {
@@ -262,6 +286,13 @@ apply_variant_configs() {
 
   if [[ "$KSU_TYPE" != "None" ]]; then
     enable_ksu_common_configs "$config_file"
+  fi
+
+  if [[ "$KSU_TYPE" == FinaSU ]]; then
+    # FinaSU's Kconfig requires KPROBES and built-in EXT4. Its SUSFS
+    # interface needs a separate kernel patch set, not our current backports.
+    enable_config_values "$config_file" CONFIG_KSU CONFIG_KPROBES CONFIG_EXT4_FS CONFIG_KALLSYMS CONFIG_KSU_DYNAMIC_MANAGER
+    disable_config_values "$config_file" CONFIG_KSU_SUSFS CONFIG_KSU_DISABLE_MANAGER CONFIG_KSU_DISABLE_POLICY
   fi
 
   if [[ "$KSU_TYPE" == *nomount* ]]; then

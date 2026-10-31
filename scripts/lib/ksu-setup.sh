@@ -87,6 +87,10 @@ install_ksu_variant() {
       : "${KSU_COMMIT:?KSU_COMMIT must be resolved for KowSU}"
       setup_kernelsu_repo "KOWX712" "KernelSU" "$KSU_COMMIT"
       ;;
+    "FinaSU")
+      : "${KSU_COMMIT:?KSU_COMMIT must be resolved for FinaSU}"
+      setup_kernelsu_repo "LyraVoid" "FinaSU" "$KSU_COMMIT"
+      ;;
     "KernelSU-Next")
       : "${KSU_COMMIT:?KSU_COMMIT must be resolved for KernelSU-Next}"
       setup_kernelsu_repo "KernelSU-Next" "KernelSU-Next" "$KSU_COMMIT"
@@ -99,9 +103,9 @@ install_ksu_variant() {
       : "${KSU_COMMIT:?KSU_COMMIT must be resolved for SukiSU Ultra}"
       setup_kernelsu_repo "SukiSU-Ultra" "SukiSU-Ultra" "$KSU_COMMIT"
       ;;
-    "ReSukiSU"|"ReSukiSU-with-susfs"|"ReSukiSU-with-susfs-nomount"|"ReSukiSU-with-susfs-zeromount")
-      : "${KSU_COMMIT:?KSU_COMMIT must be resolved for ReSukiSU}"
-      setup_kernelsu_repo "ReSukiSU" "ReSukiSU" "$KSU_COMMIT"
+    "BakaSU"|"BakaSU-with-susfs"|"BakaSU-with-susfs-nomount"|"BakaSU-with-susfs-zeromount")
+      : "${KSU_COMMIT:?KSU_COMMIT must be resolved for BakaSU}"
+      setup_kernelsu_repo "Baka-SU" "BakaSU" "$KSU_COMMIT"
       ;;
     *)
       echo "::error::Unsupported ksu_type: $ksu_type"

@@ -154,41 +154,41 @@ verify_susfs_source_integration() {
     local fake_state_def_re='^[[:space:]]*(__[A-Za-z0-9_]+[[:space:]]+)*struct[[:space:]]+selinux_state[[:space:]]+fake_state([[:space:];=]|$)'
     local running_def_re='^[[:space:]]*(__[A-Za-z0-9_]+[[:space:]]+)*bool[[:space:]]+ksu_selinux_hide_running([[:space:];=]|$)'
 
-    grep -R -Eq "$fake_state_def_re" "$ksu_kernel_dir" || {
+    grep -R --include='*.c' --include='*.h' -Eq "$fake_state_def_re" "$ksu_kernel_dir" || {
       echo "::error::KernelSU tree does not define fake_state required by the susfs SELinux hooks."
       exit 1
     }
-    grep -R -Eq "$running_def_re" "$ksu_kernel_dir" || {
+    grep -R --include='*.c' --include='*.h' -Eq "$running_def_re" "$ksu_kernel_dir" || {
       echo "::error::KernelSU tree does not define ksu_selinux_hide_running required by the susfs SELinux hooks."
       exit 1
     }
   fi
 
-  if [[ "$KSU_TYPE" == ReSukiSU* ]]; then
+  if [[ "$KSU_TYPE" == BakaSU* ]]; then
     test -f "$runtime_file" || {
-      echo "::error::ReSukiSU runtime file is missing at ${runtime_file}"
+      echo "::error::BakaSU runtime file is missing at ${runtime_file}"
       exit 1
     }
 
     grep -Eq '^[[:space:]]*DEFINE_STATIC_KEY_TRUE\(ksu_is_init_rc_hook_enabled\);$' "$runtime_file" || {
-      echo "::error::ReSukiSU runtime compat is missing ksu_is_init_rc_hook_enabled, so susfs builds will fail or silently fall back."
+      echo "::error::BakaSU runtime compat is missing ksu_is_init_rc_hook_enabled, so susfs builds will fail or silently fall back."
       exit 1
     }
 
     grep -Eq '^[[:space:]]*DEFINE_STATIC_KEY_TRUE\(ksu_is_input_hook_enabled\);$' "$runtime_file" || {
-      echo "::error::ReSukiSU runtime compat is missing ksu_is_input_hook_enabled, so susfs builds will fail or silently fall back."
+      echo "::error::BakaSU runtime compat is missing ksu_is_input_hook_enabled, so susfs builds will fail or silently fall back."
       exit 1
     }
 
     if ! grep -Eq '^[[:space:]]*#define ksu_init_rc_hook ksu_is_init_rc_hook_enabled$' "$runtime_file" && \
        ! grep -Eq '^[[:space:]]*#define ksu_init_rc_hook_inactive\(\) \(!static_branch_likely\(&ksu_is_init_rc_hook_enabled\)\)$' "$runtime_file"; then
-      echo "::error::ReSukiSU runtime compat is not pointing init_rc hook to the susfs static key."
+      echo "::error::BakaSU runtime compat is not pointing init_rc hook to the susfs static key."
       exit 1
     fi
 
     if ! grep -Eq '^[[:space:]]*#define ksu_input_hook ksu_is_input_hook_enabled$' "$runtime_file" && \
        ! grep -Eq '^[[:space:]]*#define ksu_input_hook_inactive\(\) \(!static_branch_likely\(&ksu_is_input_hook_enabled\)\)$' "$runtime_file"; then
-      echo "::error::ReSukiSU runtime compat is not pointing input hook to the susfs static key."
+      echo "::error::BakaSU runtime compat is not pointing input hook to the susfs static key."
       exit 1
     fi
   fi
@@ -261,8 +261,49 @@ verify_susfs_binary_presence() {
   } | tee susfs-proof.txt
 }
 
+# A partial Kbuild succeeds with unresolved hooks. Compare the kernel callers
+# with global driver definitions so validation catches ABI drift before Image's
+# final link, including LLVM bitcode objects when LTO is enabled.
+verify_susfs_hook_linkage() {
+  local llvm_nm="${CLANG_ROOT:?}/llvm-nm"
+  local driver_objects="out/${KSU_DRIVER_DIR:?}/kernelsu"
+  local object_file definitions required missing
+  local caller_objects=(out/fs/exec.o out/security/selinux/hooks.o out/security/selinux/selinuxfs.o)
+  local provider_objects=(out/fs/susfs.o)
+  local ksu_objects=()
+
+  [[ -x "$llvm_nm" && -d "$driver_objects" ]] || {
+    echo "::error::SUSFS hook linkage requires llvm-nm and compiled KernelSU objects."
+    return 1
+  }
+  mapfile -d '' -t ksu_objects < <(find "$driver_objects" -type f -name '*.o' -print0)
+  [[ "${#ksu_objects[@]}" -gt 0 ]] || {
+    echo "::error::No KernelSU objects were compiled for SUSFS hook linkage verification."
+    return 1
+  }
+  provider_objects+=("${ksu_objects[@]}")
+  for object_file in "${caller_objects[@]}" "${provider_objects[@]}"; do
+    [[ -s "$object_file" ]] || {
+      echo "::error::SUSFS hook linkage object is missing: $object_file"
+      return 1
+    }
+  done
+  definitions="$("$llvm_nm" --extern-only --defined-only --format=posix "${provider_objects[@]}" \
+    | awk 'NF >= 2 {print $1}' | sort -u)" || return 1
+  required="$("$llvm_nm" --undefined-only --format=posix "${caller_objects[@]}" \
+    | awk '$2 == "U" && $1 ~ /^(__)?ksu_|^susfs_|^my_/ {print $1}' | sort -u)" || return 1
+  missing="$(comm -23 <(printf '%s\n' "$required") <(printf '%s\n' "$definitions"))"
+  if [[ -n "$missing" ]]; then
+    echo "::error::SUSFS kernel hooks require symbols absent from the selected KernelSU driver:"
+    printf '%s\n' "$missing"
+    return 1
+  fi
+  echo "[+] SUSFS exec and SELinux hooks match the compiled KernelSU/SUSFS symbols."
+}
+
 verify_nomount_source_integration() {
   local fs_dir="${NOMOUNT_FS_DIR:?}"
+  local detected_version
 
   test -f "$fs_dir/nomount/nomount.c" || {
     echo "::error::NoMount source is missing at $fs_dir/nomount/nomount.c."
@@ -280,7 +321,8 @@ verify_nomount_source_integration() {
     echo "::error::$fs_dir/Kconfig does not include the NoMount Kconfig."
     exit 1
   }
-  grep -Fq "#define NOMOUNT_VERSION \"${NOMOUNT_VERSION}\"" "$fs_dir/nomount/nomount.h" || {
+  detected_version="$(detect_nomount_version "$fs_dir/nomount")" && \
+    [[ "$detected_version" == "$NOMOUNT_VERSION" ]] || {
     echo "::error::Integrated NoMount headers do not report expected version ${NOMOUNT_VERSION}."
     exit 1
   }
@@ -396,29 +438,29 @@ verify_nomount_binary_presence() {
   } | tee nomount-proof.txt
 }
 
-verify_resukisu_susfs_hook_mode() {
+verify_bakasu_susfs_hook_mode() {
   test -f build.log || {
-    echo "::error::build.log is missing, cannot verify ReSukiSU hook mode."
+    echo "::error::build.log is missing, cannot verify BakaSU hook mode."
     exit 1
   }
 
   if grep -Eq 'using KSU_TRACEPOINT_HOOK|using Tracepoint Syscall Redirect Hook' build.log; then
-    echo "::error::ReSukiSU fell back to KSU_TRACEPOINT_HOOK, so the manager will not detect susfs inline mode."
+    echo "::error::BakaSU fell back to KSU_TRACEPOINT_HOOK, so the manager will not detect susfs inline mode."
     exit 1
   fi
 
   if grep -Eq 'using KSU_MANUAL_HOOK|using Manual Hook' build.log; then
-    echo "::error::ReSukiSU fell back to KSU_MANUAL_HOOK, so this build is not the expected susfs inline mode."
+    echo "::error::BakaSU fell back to KSU_MANUAL_HOOK, so this build is not the expected susfs inline mode."
     exit 1
   fi
 
   grep -Eq 'using SUSFS_INLINE_HOOK|using SuSFS Inline hook' build.log || {
-    echo "::error::ReSukiSU did not report SUSFS_INLINE_HOOK in build.log."
+    echo "::error::BakaSU did not report SUSFS_INLINE_HOOK in build.log."
     exit 1
   }
 
   {
-    echo "==== RESUKISU SUSFS HOOK PROOF ===="
+    echo "==== BAKASU SUSFS HOOK PROOF ===="
     echo "kernel_branch=${KERNEL_BRANCH}"
     echo "kernel_commit=${KERNEL_COMMIT}"
     echo "modules_branch=${MODULES_BRANCH}"

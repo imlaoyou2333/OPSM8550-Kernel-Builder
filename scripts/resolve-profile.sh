@@ -20,9 +20,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${GITHUB_STEP_SUMMARY:?}"
 
 INPUT_KERNEL_BRANCH="${INPUT_KERNEL_BRANCH:-}"
+INPUT_ROM_GKI_MODULE_COMPAT="${INPUT_ROM_GKI_MODULE_COMPAT:-Strict GKI module checks (default)}"
 
 resolve_build_profile "$INPUT_BUILD_PROFILE"
 resolve_root_solution "$INPUT_ROOT_SOLUTION"
+
+case "$INPUT_ROM_GKI_MODULE_COMPAT" in
+  "Strict GKI module checks (default)") ROM_GKI_MODULE_COMPAT=0 ;;
+  "Use existing ROM system_dlkm modules (experimental)")
+    if [[ "$PROFILE_ID" != sm8650-oneplus12-crdroid ]]; then
+      echo "::error::ROM GKI module compatibility mode is currently validated only for the OnePlus 12 crDroid profile."
+      exit 1
+    fi
+    ROM_GKI_MODULE_COMPAT=1
+    ;;
+  *)
+    echo "::error::Unknown ROM GKI module compatibility mode: $INPUT_ROM_GKI_MODULE_COMPAT"
+    exit 1
+    ;;
+esac
 
 case "$INPUT_BUILD_MODE" in
   "Full build (artifact only)"|"Full build and publish release"|"Patch/config validation only") ;;
@@ -69,6 +85,10 @@ fi
 
 MODULES_BRANCH="${MODULES_BRANCH_OVERRIDE:-$KERNEL_BRANCH}"
 
+# Validate source branches before resolving optional root/patch dependencies.
+KERNEL_COMMIT="$(git_resolve_branch_commit "$KERNEL_REPO" "$KERNEL_BRANCH")"
+MODULES_COMMIT="$(git_resolve_branch_commit "$MODULES_REPO" "$MODULES_BRANCH")"
+
 resolve_clang_version "$INPUT_CLANG_CHOICE" "$KERNEL_BRANCH"
 infer_android_versions "$KERNEL_BRANCH"
 if [[ -z "$SUPPORTED_ANDROID_VERSIONS" ]]; then
@@ -98,17 +118,33 @@ case "$KSU_TYPE" in
     KSU_REPO="https://github.com/KOWX712/KernelSU.git"
     KSU_REF="master"
     ;;
+  FinaSU)
+    KSU_REPO="https://github.com/LyraVoid/FinaSU.git"
+    KSU_REF="master"
+    ;;
   SukiSU-Ultra-with-KPM|SukiSU-Ultra-with-susfs-KPM|SukiSU-Ultra-with-susfs-nomount-KPM|SukiSU-Ultra-with-susfs-zeromount-KPM)
     KSU_REPO="https://github.com/SukiSU-Ultra/SukiSU-Ultra.git"
     KSU_REF="main"
+    if [[ "$KSU_TYPE" == *susfs* ]]; then
+      # The October main tree changed the hook ABI beyond our guarded SUSFS
+      # patches. Pin the revision that passed the full SUSFS/NoMount/KPM build.
+      KSU_REF="7fbbb1f12e2410b69c8ebf958be84f165b8d0c93"
+      KSU_COMMIT="$KSU_REF"
+    fi
     ;;
-  ReSukiSU*)
-    KSU_REPO="https://github.com/ReSukiSU/ReSukiSU.git"
+  BakaSU*)
+    KSU_REPO="https://github.com/Baka-SU/BakaSU.git"
     KSU_REF="main"
+    if [[ "$KSU_TYPE" == *susfs* ]]; then
+      # Latest main suspends SUSFS builds until its SELinux hooks are updated.
+      # Retain the revision that passed the full three-variant build on Sep 27.
+      KSU_REF="fa8311f632a215b5381ec644627c6198d1e8a13e"
+      KSU_COMMIT="$KSU_REF"
+    fi
     ;;
 esac
 
-if [[ -n "$KSU_REPO" ]]; then
+if [[ -n "$KSU_REPO" && -z "$KSU_COMMIT" ]]; then
   KSU_COMMIT="$(git_ls_remote_retry --exit-code "$KSU_REPO" "refs/heads/${KSU_REF}" \
     | awk 'NR == 1 {print $1}')"
   if [[ ! "$KSU_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
@@ -126,9 +162,9 @@ if [[ "$KSU_TYPE" == *susfs* ]]; then
   SUSFS_MIN_VERSION="2.2.0"
   resolve_susfs_settings "$SOC" "$KERNEL_BRANCH"
   case "$KSU_TYPE" in
-    SukiSU-Ultra-with-susfs-KPM|SukiSU-Ultra-with-susfs-nomount-KPM|SukiSU-Ultra-with-susfs-zeromount-KPM)
-      SUSFS_COMMIT="$(sukisu_compatible_susfs_commit "$SUSFS_REF")"
-      echo "::notice::Using SukiSU-compatible SUSFS v2.3.0 commit $SUSFS_COMMIT for $SUSFS_REF."
+    SukiSU-Ultra-with-susfs-KPM|SukiSU-Ultra-with-susfs-nomount-KPM|SukiSU-Ultra-with-susfs-zeromount-KPM|BakaSU-with-susfs|BakaSU-with-susfs-nomount|BakaSU-with-susfs-zeromount)
+      SUSFS_COMMIT="$(su_session_compatible_susfs_commit "$SUSFS_REF")"
+      echo "::notice::Using su-session-compatible SUSFS v2.3.0 commit $SUSFS_COMMIT for $SUSFS_REF ($KSU_TYPE)."
       ;;
     *)
       SUSFS_COMMIT="$(git_ls_remote_retry --exit-code "$SUSFS_REPO" "refs/heads/${SUSFS_REF}" \
@@ -167,21 +203,6 @@ if [[ "$KSU_TYPE" == *nomount* ]]; then
     echo "::error::Could not resolve NoMount branch '$NOMOUNT_REF' to a commit."
     exit 1
   fi
-fi
-
-KERNEL_COMMIT="$(git_ls_remote_retry --exit-code --heads "$KERNEL_REPO" "$KERNEL_BRANCH" \
-  | awk 'NR == 1 {print $1}')"
-if [[ ! "$KERNEL_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "::error::Branch '$KERNEL_BRANCH' was not found in $KERNEL_REPO"
-  exit 1
-fi
-
-MODULES_COMMIT="$(git_ls_remote_retry --exit-code --heads "$MODULES_REPO" "$MODULES_BRANCH" \
-  | awk 'NR == 1 {print $1}')"
-if [[ ! "$MODULES_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "::error::Branch '$MODULES_BRANCH' was not found in $MODULES_REPO"
-  echo "::error::The matching modules repository is required for config and Kconfig resolution."
-  exit 1
 fi
 
 # Kernel-SU/AnyKernel3 disappeared on 2026-09-15 and made every matrix entry
@@ -229,6 +250,7 @@ esac
   echo "PLATFORM_NAME=$PLATFORM_NAME"
   echo "BUILD_CONFIGS=$BUILD_CONFIGS"
   echo "KERNEL_MAKE_FLAGS=$KERNEL_MAKE_FLAGS"
+  echo "ROM_GKI_MODULE_COMPAT=$ROM_GKI_MODULE_COMPAT"
   echo "SOURCE_LAYOUT=$SOURCE_LAYOUT"
   echo "KERNEL_SOURCE=$KERNEL_SOURCE"
   echo "SOURCE_NAME=$SOURCE_NAME"
@@ -284,6 +306,7 @@ esac
   echo "modules_commit=$MODULES_COMMIT"
   echo "clang_version=$CLANG_VERSION"
   echo "ksu_type=$KSU_TYPE"
+  echo "rom_gki_module_compat=$ROM_GKI_MODULE_COMPAT"
   echo "ksu_commit=$KSU_COMMIT"
   echo "susfs_ref=$SUSFS_REF"
   echo "susfs_commit=$SUSFS_COMMIT"
@@ -310,6 +333,7 @@ esac
     echo "- Device make flags: $KERNEL_MAKE_FLAGS"
   fi
   echo "- Root solution: $KSU_TYPE"
+  echo "- ROM GKI module compatibility: $ROM_GKI_MODULE_COMPAT"
   echo "- Mode: $INPUT_BUILD_MODE"
   if [[ -n "$SUPPORTED_ANDROID_VERSIONS" ]]; then
     echo "- Android package check: $SUPPORTED_ANDROID_VERSIONS"

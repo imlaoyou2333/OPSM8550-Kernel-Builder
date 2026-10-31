@@ -112,6 +112,8 @@ resolve_build_profile() {
       DEVICE_NAMES="salami OP591BL1 OP594DL1 aston OP5D35L1 astonc OP5CF9L1"
       KERNEL_SOURCE="crdroidandroid"
       SOURCE_LAYOUT="community-flat"
+      # Match the common and salami/aston device BoardConfig make flags.
+      KERNEL_MAKE_FLAGS="CONFIG_OPLUS_DEVICE_DTBS=y CONFIG_SALAMI_DTB=y CONFIG_ASTON_DTB=y"
       ;;
     "SM8550 | OnePlus 12R | development")
       PROFILE_ID="sm8550-oneplus12r-dev"
@@ -241,14 +243,16 @@ resolve_root_solution() {
     "KernelSU-Next + SUSFS + NoMount (experimental)") KSU_TYPE="KernelSU-Next-with-susfs-nomount" ;;
     "KernelSU-Next + SUSFS + ZeroMount (experimental)") KSU_TYPE="KernelSU-Next-with-susfs-zeromount" ;;
     "KowSU") KSU_TYPE="KowSU" ;;
+    "FinaSU (experimental)") KSU_TYPE="FinaSU" ;;
     "SukiSU Ultra + KPM (experimental)") KSU_TYPE="SukiSU-Ultra-with-KPM" ;;
     "SukiSU Ultra + SUSFS + KPM (experimental)") KSU_TYPE="SukiSU-Ultra-with-susfs-KPM" ;;
     "SukiSU Ultra + SUSFS + ZeroMount + KPM (experimental)") KSU_TYPE="SukiSU-Ultra-with-susfs-zeromount-KPM" ;;
     "SukiSU Ultra + SUSFS + NoMount + KPM (experimental)") KSU_TYPE="SukiSU-Ultra-with-susfs-nomount-KPM" ;;
-    "ReSukiSU") KSU_TYPE="ReSukiSU" ;;
-    "ReSukiSU + susfs") KSU_TYPE="ReSukiSU-with-susfs" ;;
-    "ReSukiSU + SUSFS + ZeroMount (experimental)") KSU_TYPE="ReSukiSU-with-susfs-zeromount" ;;
-    "ReSukiSU + SUSFS + NoMount (experimental)") KSU_TYPE="ReSukiSU-with-susfs-nomount" ;;
+    # Keep existing workflow_dispatch clients working after the upstream rename.
+    "BakaSU"|"ReSukiSU") KSU_TYPE="BakaSU" ;;
+    "BakaSU + SUSFS"|"ReSukiSU + susfs") KSU_TYPE="BakaSU-with-susfs" ;;
+    "BakaSU + SUSFS + ZeroMount (experimental)"|"ReSukiSU + SUSFS + ZeroMount (experimental)") KSU_TYPE="BakaSU-with-susfs-zeromount" ;;
+    "BakaSU + SUSFS + NoMount (experimental)"|"ReSukiSU + SUSFS + NoMount (experimental)") KSU_TYPE="BakaSU-with-susfs-nomount" ;;
     *)
       echo "::error::Unsupported root solution: $1"
       return 1
@@ -264,6 +268,7 @@ resolve_clang_version() {
     "Recommended (auto-select based on branch)")
       case "$branch" in
         main|master|android-mainline*) CLANG_VERSION="clang-r596125" ;;
+        lineage-24*|seventeen*|android17*|17.*) CLANG_VERSION="clang-r584948" ;;
         lineage-19.1*|oneplus/*_s_12.1*|oneplus/*_s_12.0*) CLANG_VERSION="clang-r416183b1" ;;
         lineage-20*|thirteen*|android13*|13.*|oneplus/*_t_13*|oneplus_*_t_13*) CLANG_VERSION="clang-r450784d" ;;
         lineage-21*|fourteen*|android14*|14.*|oneplus/*_u_14*|oneplus_*_u_14*) CLANG_VERSION="clang-r487747c" ;;
@@ -277,6 +282,7 @@ resolve_clang_version() {
       esac
       ;;
     "clang-r596125 (Clang 22.0.2 / current AOSP mainline era)") CLANG_VERSION="clang-r596125" ;;
+    "clang-r584948 (Android 17 / crDroid 13 era)") CLANG_VERSION="clang-r584948" ;;
     "clang-r563880c (Android 16 / LineageOS 23.2+ era)") CLANG_VERSION="clang-r563880c" ;;
     "clang-r547379 (Android 16 / LineageOS 23.0 era)") CLANG_VERSION="clang-r547379" ;;
     "clang-r536225 (Android 15 / LineageOS 22.2 era)") CLANG_VERSION="clang-r536225" ;;
@@ -323,11 +329,13 @@ resolve_susfs_settings() {
   SUSFS_PATCH_FILE="50_add_susfs_in_${SUSFS_REF}.patch"
 }
 
-sukisu_compatible_susfs_commit() {
+su_session_compatible_susfs_commit() {
   local susfs_ref="$1"
 
   # Keep every kernel branch pinned to a SUSFS v2.3.0 revision whose KernelSU
-  # patch matches the su-session fd ABI introduced by SukiSU Ultra 86e9b3b.
+  # patch matches the su-session fd ABI in the pinned SukiSU Ultra and BakaSU
+  # drivers. Newer patches require preinit and external SELinux hooks that
+  # these driver revisions do not export.
   # The revisions share that KernelSU patch but retain branch-specific patches.
   case "$susfs_ref" in
     gki-android13-5.10) echo "2c774fdb4f0aaa743598c1bec787f6c935574ed1" ;;
@@ -335,7 +343,7 @@ sukisu_compatible_susfs_commit() {
     gki-android14-5.15) echo "aab99ba7693d94489fd32f1cc4c9d58396fffeee" ;;
     gki-android14-6.1) echo "6c2b5042ec656cd3ce9ad352a1e226e2e9e26779" ;;
     *)
-      echo "::error::No SukiSU-compatible SUSFS commit is pinned for $susfs_ref" >&2
+      echo "::error::No su-session-compatible SUSFS commit is pinned for $susfs_ref" >&2
       return 1
       ;;
   esac
@@ -345,6 +353,7 @@ infer_android_versions() {
   local branch="$1"
 
   case "$branch" in
+    lineage-24*|seventeen*|android17*|17.*) SUPPORTED_ANDROID_VERSIONS="17" ;;
     lineage-19.1*|oneplus/*_s_12*|oneplus_*_s_12*) SUPPORTED_ANDROID_VERSIONS="12" ;;
     lineage-20*|thirteen*|android13*|13.*|oneplus/*_t_13*|oneplus_*_t_13*) SUPPORTED_ANDROID_VERSIONS="13" ;;
     lineage-21*|fourteen*|android14*|14.*|oneplus/*_u_14*|oneplus_*_u_14*) SUPPORTED_ANDROID_VERSIONS="14" ;;

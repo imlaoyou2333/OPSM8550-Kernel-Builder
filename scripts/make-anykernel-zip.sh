@@ -9,6 +9,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib/git-helpers.sh"
 # shellcheck source=lib/anykernel-helpers.sh
 . "${SCRIPT_DIR}/lib/anykernel-helpers.sh"
+# shellcheck source=lib/kpm-image.sh
+. "${SCRIPT_DIR}/lib/kpm-image.sh"
+# shellcheck source=lib/finasu-manager.sh
+. "${SCRIPT_DIR}/lib/finasu-manager.sh"
 
 : "${SOC:?}"
 : "${PROFILE_ID:?}"
@@ -30,9 +34,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 SUPPORTED_ANDROID_VERSIONS="${SUPPORTED_ANDROID_VERSIONS:-}"
 KERNEL_MAKE_FLAGS="${KERNEL_MAKE_FLAGS:-}"
+ROM_GKI_MODULE_COMPAT="${ROM_GKI_MODULE_COMPAT:-0}"
+case "$ROM_GKI_MODULE_COMPAT" in
+  0|1) ;;
+  *) echo "::error::Invalid ROM GKI module compatibility value: $ROM_GKI_MODULE_COMPAT"; exit 1 ;;
+esac
 KSU_COMMIT="${KSU_COMMIT:-}"
 KSU_REPO="${KSU_REPO:-}"
 KSU_REF="${KSU_REF:-}"
+KSU_UAPI_VERSION="${KSU_UAPI_VERSION:-}"
+KSU_UAPI_PATCH_SHA256="${KSU_UAPI_PATCH_SHA256:-}"
 SUSFS_REF="${SUSFS_REF:-}"
 SUSFS_COMMIT="${SUSFS_COMMIT:-}"
 SUSFS_VERSION="${SUSFS_VERSION:-}"
@@ -51,14 +62,22 @@ MAGISK_TOOLS_VERSION="${MAGISK_TOOLS_VERSION:-30.7}"
 MAGISK_APK_URL="${MAGISK_APK_URL:-https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk}"
 MAGISK_APK_SHA256="${MAGISK_APK_SHA256:-e0d32d2123532860f97123d927b1bb86c4e08e6fd8a48bfc6b5bee0afae9ebd5}"
 MAGISKBOOT_ARM64_SHA256="${MAGISKBOOT_ARM64_SHA256:-d7440e2cd89899426e809554bf793baef9804ccbe5a52ce34a8b6242725d3c77}"
+MAGISK_BUSYBOX_ARM64_SHA256="${MAGISK_BUSYBOX_ARM64_SHA256:-4d60ab3f5a59ebb2ca863f2f514e6924401b581e9b64f602665c008177626651}"
 MAGISK_APK_PATH="${MAGISK_APK_PATH:-}"
 
 SHORT_KERNEL_COMMIT="${KERNEL_COMMIT:0:12}"
 ZIP_NAME="${PROFILE_ID}_${KSU_TYPE}_${SHORT_KERNEL_COMMIT}_${BUILD_TIMESTAMP}"
+if [[ "$ROM_GKI_MODULE_COMPAT" == 1 ]]; then
+  ZIP_NAME="${ZIP_NAME}_rom-gki-compat"
+fi
 ASSET_DIR="${GITHUB_WORKSPACE:-$(pwd)}/release-assets"
 KPM_ENABLED=false
+if [[ "$KSU_TYPE" == FinaSU ]]; then
+  verify_finasu_manager_binary "${SOC}/out/arch/arm64/boot/Image" "${SOC}/finasu-manager-proof.txt"
+fi
 if [[ "$KSU_TYPE" == *KPM* ]]; then
   KPM_ENABLED=true
+  verify_kpm_image_patch "${SOC}/out/arch/arm64/boot/Image" "${SOC}/kpm-image-proof.txt"
 fi
 
 {
@@ -96,12 +115,14 @@ ANYKERNEL_UPDATE_BINARY="AnyKernel3/META-INF/com/google/android/update-binary"
 ANYKERNEL_TEMPLATE="${SCRIPT_DIR}/templates/anykernel.sh"
 ANYKERNEL_BUSYBOX_ABI="arm"
 ANYKERNEL_BUSYBOX_SHA256=""
+ARM64_TOOLSET_REQUIRED=false
 install_anykernel_template "$ANYKERNEL_TEMPLATE" "$ANYKERNEL_SCRIPT"
 configure_anykernel_properties \
   "$ANYKERNEL_SCRIPT" \
   "OnePlus Kernel (${KSU_TYPE}) for ${TARGET_NAME}" \
   "$DEVICE_NAMES" \
   "$SUPPORTED_ANDROID_VERSIONS"
+set_anykernel_flasher_developer "$ANYKERNEL_UPDATE_BINARY"
 add_anykernel_devicecheck_diagnostics "$ANYKERNEL_UPDATE_BINARY"
 patch_anykernel_app_flash_staging "$ANYKERNEL_UPDATE_BINARY"
 
@@ -117,13 +138,26 @@ if [[ "$KPM_ENABLED" == true ]]; then
     "$MAGISK_APK_PATH"
   prepare_anykernel_arm64_toolset "AnyKernel3/tools"
   ANYKERNEL_BUSYBOX_ABI="arm64"
+  ARM64_TOOLSET_REQUIRED=true
+elif [[ "$PROFILE_ID" == sm8650-oneplus12-crdroid ]]; then
+  install_anykernel_arm64_magiskboot \
+    "$MAGISK_APK_URL" \
+    "$MAGISK_APK_SHA256" \
+    "$MAGISKBOOT_ARM64_SHA256" \
+    "AnyKernel3/tools/magiskboot" \
+    "$MAGISK_APK_PATH" \
+    "AnyKernel3/tools/busybox" \
+    "$MAGISK_BUSYBOX_ARM64_SHA256"
+  prepare_anykernel_arm64_toolset "AnyKernel3/tools"
+  ANYKERNEL_BUSYBOX_ABI="arm64"
+  ARM64_TOOLSET_REQUIRED=true
 fi
 ANYKERNEL_BUSYBOX_SHA256="$(sha256sum AnyKernel3/tools/busybox | awk '{print $1}')"
 ANYKERNEL_MAGISKBOOT_SHA256="$(sha256sum AnyKernel3/tools/magiskboot | awk '{print $1}')"
 add_anykernel_preflight_diagnostics \
   "$ANYKERNEL_UPDATE_BINARY" \
   "$ANYKERNEL_BUSYBOX_ABI" \
-  "$KPM_ENABLED"
+  "$ARM64_TOOLSET_REQUIRED"
 
 rm -rf "$ASSET_DIR"
 mkdir -p "$ASSET_DIR"
@@ -142,11 +176,18 @@ jq -n \
   --arg modules_commit "$MODULES_COMMIT" \
   --arg clang "$CLANG_VERSION" \
   --arg kernel_make_flags "$KERNEL_MAKE_FLAGS" \
+  --argjson rom_gki_module_compat "$([[ "$ROM_GKI_MODULE_COMPAT" == 1 ]] && echo true || echo false)" \
   --arg root_solution "$KSU_TYPE" \
   --argjson kpm_enabled "$KPM_ENABLED" \
+  --arg kpm_patch_version "$([[ "$KPM_ENABLED" == true ]] && echo "$KPM_PATCH_VERSION" || true)" \
+  --arg kpm_tools_sha256 "$([[ "$KPM_ENABLED" == true ]] && echo "$KPM_TOOLS_SHA256" || true)" \
+  --arg kpm_payload_sha256 "$([[ "$KPM_ENABLED" == true ]] && echo "$KPM_PAYLOAD_SHA256" || true)" \
   --arg ksu_repo "$KSU_REPO" \
   --arg ksu_ref "$KSU_REF" \
   --arg ksu_commit "$KSU_COMMIT" \
+  --arg ksu_uapi_version "$KSU_UAPI_VERSION" \
+  --arg ksu_uapi_patch_sha256 "$KSU_UAPI_PATCH_SHA256" \
+  --arg manager_certificate_sha256 "$([[ "$KSU_TYPE" == FinaSU ]] && echo "$FINASU_MANAGER_CERT_SHA256" || true)" \
   --arg susfs_ref "$SUSFS_REF" \
   --arg susfs_commit "$SUSFS_COMMIT" \
   --arg susfs_version "$SUSFS_VERSION" \
@@ -179,11 +220,18 @@ jq -n \
     modules_commit: $modules_commit,
     clang: $clang,
     device_kernel_make_flags: ($kernel_make_flags | split(" ") | map(select(length > 0))),
+    rom_gki_module_compat: $rom_gki_module_compat,
     root_solution: $root_solution,
     kpm_enabled: $kpm_enabled,
+    kpm_patch_version: $kpm_patch_version,
+    kpm_tools_sha256: $kpm_tools_sha256,
+    kpm_payload_sha256: $kpm_payload_sha256,
     kernelsu_repository: $ksu_repo,
     kernelsu_ref: $ksu_ref,
     kernelsu_commit: $ksu_commit,
+    kernelsu_uapi_version: $ksu_uapi_version,
+    kernelsu_uapi_patch_sha256: $ksu_uapi_patch_sha256,
+    manager_certificate_sha256: $manager_certificate_sha256,
     susfs_ref: $susfs_ref,
     susfs_commit: $susfs_commit,
     susfs_version: $susfs_version,
@@ -242,9 +290,12 @@ cat > "$ASSET_DIR/release-notes.md" <<EOF_NOTES
 - Modules commit: \`${MODULES_COMMIT}\`
 - Clang: ${CLANG_VERSION}
 - Device kernel make flags: ${KERNEL_MAKE_FLAGS:-none}
+- ROM GKI module compatibility: ${ROM_GKI_MODULE_COMPAT}
 - Root solution: ${KSU_TYPE}
 - KernelSU source: ${KSU_REPO:-disabled} (${KSU_REF:-none}, ${KSU_COMMIT:-none})
+- KernelSU UAPI backport: ${KSU_UAPI_VERSION:-none} (patch SHA-256: ${KSU_UAPI_PATCH_SHA256:-none})
 - KPM: ${KPM_ENABLED}
+- KPM Image injection: $([[ "$KPM_ENABLED" == true ]] && echo "$KPM_PATCH_VERSION (verified)" || echo disabled)
 - SUSFS: ${SUSFS_NOTE}
 - NoMount: ${NOMOUNT_NOTE}
 - ZeroMount: ${ZEROMOUNT_NOTE}
@@ -253,8 +304,9 @@ cat > "$ASSET_DIR/release-notes.md" <<EOF_NOTES
 
 The flashable ZIP performs a device-codename check before modifying the boot partition.
 Only flash it on the listed target devices, and keep a known-good stock boot image available.
-This package replaces only the kernel Image; it does not replace the ROM's vendor_dlkm modules.
+This package replaces only the kernel Image; it does not replace the ROM's system_dlkm or vendor_dlkm modules.
 Use it only with a ROM build whose vendor modules match the source, branch, and device flags above.
+When ROM GKI module compatibility is enabled, protected-symbol enforcement is disabled so the ROM's system_dlkm modules may load with this custom Image. Their signatures cannot be authenticated by this Image's newly generated key. This is experimental and reduces GKI module protection.
 See \`build-info.json\` and \`SHA256SUMS\` for provenance and integrity data.
 EOF_NOTES
 
