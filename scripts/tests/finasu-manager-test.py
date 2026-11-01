@@ -51,6 +51,7 @@ objtree := {fixture}
 src := {source}
 CONFIG_KSU := y
 CONFIG_ARM64 := y
+CONFIG_KALLSYMS_ALL := y
 CONFIG_KSU_DYNAMIC_MANAGER := y
 include {fixture / 'Kbuild'}
 print:
