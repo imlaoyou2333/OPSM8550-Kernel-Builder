@@ -291,7 +291,7 @@ apply_variant_configs() {
   if [[ "$KSU_TYPE" == FinaSU ]]; then
     # FinaSU's Kconfig requires KPROBES and built-in EXT4. Its SUSFS
     # interface needs a separate kernel patch set, not our current backports.
-    enable_config_values "$config_file" CONFIG_KSU CONFIG_KPROBES CONFIG_EXT4_FS CONFIG_KALLSYMS CONFIG_KALLSYMS_ALL CONFIG_KSU_DYNAMIC_MANAGER
+    enable_config_values "$config_file" CONFIG_KALLSYMS_ALL CONFIG_KALLSYMS CONFIG_KSU CONFIG_KPROBES CONFIG_EXT4_FS CONFIG_KSU_DYNAMIC_MANAGER
     disable_config_values "$config_file" CONFIG_KSU_SUSFS CONFIG_KSU_DISABLE_MANAGER CONFIG_KSU_DISABLE_POLICY
   fi
 
