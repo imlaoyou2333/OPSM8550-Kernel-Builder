@@ -244,6 +244,7 @@ resolve_root_solution() {
     "KernelSU-Next + SUSFS + ZeroMount (experimental)") KSU_TYPE="KernelSU-Next-with-susfs-zeromount" ;;
     "KowSU") KSU_TYPE="KowSU" ;;
     "FinaSU (experimental)") KSU_TYPE="FinaSU" ;;
+    "FinaSU + NoMount (experimental)") KSU_TYPE="FinaSU-with-nomount" ;;
     "SukiSU Ultra + KPM (experimental)") KSU_TYPE="SukiSU-Ultra-with-KPM" ;;
     "SukiSU Ultra + SUSFS + KPM (experimental)") KSU_TYPE="SukiSU-Ultra-with-susfs-KPM" ;;
     "SukiSU Ultra + SUSFS + ZeroMount + KPM (experimental)") KSU_TYPE="SukiSU-Ultra-with-susfs-zeromount-KPM" ;;

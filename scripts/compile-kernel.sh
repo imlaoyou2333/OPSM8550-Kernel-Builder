@@ -150,7 +150,7 @@ EXTRACT_CERT_SOURCE="$(detect_extract_cert_source)" || {
 }
 repair_extract_cert_key_pass_guard "$EXTRACT_CERT_SOURCE"
 install_ksu_variant "${KSU_TYPE}"
-if [[ "$KSU_TYPE" == FinaSU ]]; then
+if [[ "$KSU_TYPE" == FinaSU* ]]; then
   python3 "${SCRIPT_DIR}/tests/finasu-manager-test.py" "$KSU_KERNEL_DIR"
 fi
 
@@ -227,7 +227,7 @@ fi
 if [[ "$KSU_TYPE" != "None" ]]; then
   require_config_enabled out/.config CONFIG_KSU
 fi
-if [[ "$KSU_TYPE" == FinaSU ]]; then
+if [[ "$KSU_TYPE" == FinaSU* ]]; then
   for key in CONFIG_KPROBES CONFIG_EXT4_FS CONFIG_KALLSYMS CONFIG_KSU_DYNAMIC_MANAGER; do
     require_config_enabled out/.config "$key"
   done
@@ -283,7 +283,7 @@ if [[ "$BUILD_MODE" == "Patch/config validation only" ]]; then
   COMPILE_SECONDS=$(($(date +%s) - COMPILE_STARTED_AT))
 
   SMOKE_TARGETS=()
-  if [[ "$KSU_TYPE" == FinaSU ]]; then
+  if [[ "$KSU_TYPE" == FinaSU* ]]; then
     SMOKE_TARGETS+=("${KSU_DRIVER_DIR}/kernelsu/")
   fi
   if [[ "$KSU_TYPE" == *susfs* ]]; then
@@ -391,7 +391,7 @@ if ! strings out/arch/arm64/boot/Image | grep -F "Linux version ${KERNEL_RELEASE
   exit 1
 fi
 echo "[+] Kernel release identity verified: ${KERNEL_RELEASE}"
-if [[ "$KSU_TYPE" == FinaSU ]]; then
+if [[ "$KSU_TYPE" == FinaSU* ]]; then
   verify_finasu_manager_binary out/arch/arm64/boot/Image finasu-manager-proof.txt
 fi
 if [[ "$KSU_TYPE" == *susfs* ]]; then

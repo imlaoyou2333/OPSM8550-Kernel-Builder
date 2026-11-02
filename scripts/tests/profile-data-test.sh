@@ -16,6 +16,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/../lib/susfs-apply.sh"
 # shellcheck source=../lib/kernel-helpers.sh
 . "${SCRIPT_DIR}/../lib/kernel-helpers.sh"
+# shellcheck source=../lib/finasu-manager.sh
+. "${SCRIPT_DIR}/../lib/finasu-manager.sh"
 # shellcheck source=../lib/verify.sh
 . "${SCRIPT_DIR}/../lib/verify.sh"
 
@@ -188,8 +190,12 @@ resolve_root_solution "BakaSU + SUSFS"
 assert_eq "BakaSU-with-susfs" "$KSU_TYPE" "root mapping"
 resolve_root_solution "FinaSU (experimental)"
 assert_eq FinaSU "$KSU_TYPE" "FinaSU root mapping"
+resolve_root_solution "FinaSU + NoMount (experimental)"
+assert_eq "FinaSU-with-nomount" "$KSU_TYPE" "FinaSU NoMount root mapping"
 grep -Fxq '          - FinaSU (experimental)' "$WORKFLOW_FILE" \
   || fail "workflow is missing FinaSU"
+grep -Fxq '          - FinaSU + NoMount (experimental)' "$WORKFLOW_FILE" \
+  || fail "workflow is missing FinaSU + NoMount"
 (
   # shellcheck source=../lib/ksu-setup.sh
   . "$KSU_SETUP_SCRIPT"
@@ -201,6 +207,22 @@ grep -Fxq '          - FinaSU (experimental)' "$WORKFLOW_FILE" \
   }
   install_ksu_variant "$KSU_TYPE"
 )
+(
+  # shellcheck source=../lib/ksu-setup.sh
+  . "$KSU_SETUP_SCRIPT"
+  KSU_TYPE="FinaSU-with-nomount"
+  KSU_COMMIT=3333333333333333333333333333333333333333
+  setup_kernelsu_repo() {
+    assert_eq LyraVoid "$1" "FinaSU NoMount checkout owner"
+    assert_eq FinaSU "$2" "FinaSU NoMount checkout repository"
+    assert_eq "$KSU_COMMIT" "$3" "FinaSU NoMount checkout exact commit"
+  }
+  install_ksu_variant "$KSU_TYPE"
+)
+KSU_TYPE=FinaSU-with-nomount
+MAKE_ARGS=()
+configure_finasu_manager
+assert_eq 3 "${#MAKE_ARGS[@]}" "FinaSU NoMount manager build args"
 for bakasu_suffix in "" " + SUSFS" " + SUSFS + NoMount (experimental)" " + SUSFS + ZeroMount (experimental)"; do
   resolve_root_solution "BakaSU${bakasu_suffix}"
   bakasu_type="$KSU_TYPE"
