@@ -153,9 +153,12 @@ jobs:
           set -euo pipefail
           RELEASE_TAG="kernel-build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           if ! EXISTING_SHA="$(gh api "repos/${GH_REPO}/git/ref/tags/${RELEASE_TAG}" \
+            --jq '.object.sha' 2>/dev/null)"; then
+            EXISTING_SHA=""
+          fi
 
-          - FinaSU + NoMount (experimental)
           if [[ -n "$EXISTING_SHA" && "$EXISTING_SHA" != "$GITHUB_SHA" ]]; then
+            echo "::error::Reserved release tag ${RELEASE_TAG} points to ${EXISTING_SHA}, expected ${GITHUB_SHA}."
             exit 1
           fi
           if [[ -z "$EXISTING_SHA" ]]; then
