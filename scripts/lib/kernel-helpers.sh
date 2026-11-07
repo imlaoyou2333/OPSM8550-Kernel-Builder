@@ -289,10 +289,16 @@ apply_variant_configs() {
   fi
 
   if [[ "$KSU_TYPE" == FinaSU* ]]; then
-    # FinaSU's Kconfig requires KPROBES and built-in EXT4. Its SUSFS
-    # interface needs a separate kernel patch set, not our current backports.
-    enable_config_values "$config_file" CONFIG_KALLSYMS_ALL CONFIG_KALLSYMS CONFIG_KSU CONFIG_KPROBES CONFIG_EXT4_FS CONFIG_KSU_DYNAMIC_MANAGER
-    disable_config_values "$config_file" CONFIG_KSU_SUSFS CONFIG_KSU_DISABLE_MANAGER CONFIG_KSU_DISABLE_POLICY
+    # Built-in FinaSU resolves data symbols and requires KALLSYMS_ALL.
+    enable_config_values "$config_file" CONFIG_KSU CONFIG_KPROBES CONFIG_EXT4_FS CONFIG_KALLSYMS CONFIG_KALLSYMS_ALL CONFIG_KSU_DYNAMIC_MANAGER CONFIG_HEADERS_INSTALL
+    disable_config_values "$config_file" CONFIG_KSU_DISABLE_MANAGER CONFIG_KSU_DISABLE_POLICY CONFIG_KSU_DEBUG
+    if [[ "$KSU_TYPE" == *susfs* ]]; then
+      enable_config_values "$config_file" CONFIG_THREAD_INFO_IN_TASK CONFIG_KSU_HOOK_SUSFS_INLINE
+      disable_config_values "$config_file" CONFIG_KSU_HOOK_TRACEPOINT
+    else
+      enable_config_values "$config_file" CONFIG_KSU_HOOK_TRACEPOINT
+      disable_config_values "$config_file" CONFIG_KSU_SUSFS CONFIG_KSU_HOOK_SUSFS_INLINE
+    fi
   fi
 
   if [[ "$KSU_TYPE" == *nomount* ]]; then
